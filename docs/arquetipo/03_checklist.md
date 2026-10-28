@@ -22,4 +22,4 @@ uv sync && uv run ruff check . && uv run ruff format --check . && uv run mypy ap
 | C09 Dockerfile multi-stage y sin root | ✅ PASS | builder (uv) y runtime `python:3.12.16-slim-bookworm`, uid 10001; sin `latest` |
 | C10 README con comandos exactos | ✅ PASS | §3 quick start, §4 tests, §5 cobertura |
 | C11 Nada contradice al DAS | ✅ PASS | Capas del diagrama lógico; 409 por nombre duplicado es [Archetype Convention Addition] (UNIQUE del ER) |
-| C12 Los ⚠️ de la Fase 1 están resueltos o documentados | ⚠️ PARTIAL | Los de alcance (scheduler, TLS, métricas, CD, Sonar) quedan fuera, según la nota de alcance de `01_validacion.md`; limitaciones y siguientes pasos en README §8 |
+| C12 Los ⚠️ de la Fase 1 están resueltos o documentados | ✅ PASS | C2, C6 y C8 resueltos en el código; C1, C3, C4, C5 y C7 documentados como limitaciones o siguientes pasos en README §8 (detalle al final de los concerns en `01_validacion.md`) |
