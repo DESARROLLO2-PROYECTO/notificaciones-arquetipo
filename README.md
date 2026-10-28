@@ -94,4 +94,5 @@ Siguientes pasos:
 - Resto de tablas del ER.
 - API Key.
 - Worker, Scheduler, Publisher y Mailer.
+- Monitoreo: /metrics con Prometheus y Grafana.
 - CI/CD.
