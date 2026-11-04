@@ -30,4 +30,4 @@ arquetipo/
 └── README.md, docs/arquetipo/
 ```
 
-Sin CI/CD ni API Key: quedan como siguientes pasos (README §8).
+Sin CD ni API Key: quedan como siguientes pasos (README §9).

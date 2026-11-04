@@ -45,6 +45,7 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["app"]
+relative_files = true
 branch = true
 
 [tool.coverage.report]

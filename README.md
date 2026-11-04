@@ -26,12 +26,13 @@ docker compose up --build
 En otra terminal:
 
 ```bash
-curl -i -X POST http://localhost:8000/equipos \
+curl -i -X POST http://localhost:8090/equipos \
   -H "Content-Type: application/json" -d '{"nombre":"inventario","esAdmin":false}'
-curl -i http://localhost:8000/equipos/1
+curl -i http://localhost:8090/equipos/1
 ```
 
-Swagger en http://localhost:8000/docs. Errores: 404 (no existe), 409 (nombre repetido), 422 (datos inválidos).
+El puerto publicado es el 8090 (`API_PORT` en `.env`); dentro del contenedor la API escucha en el 8000.
+Swagger en http://localhost:8090/docs. Errores: 404 (no existe), 409 (nombre repetido), 422 (datos inválidos).
 
 ## 4. Tests locales
 
@@ -41,7 +42,7 @@ uv run pytest                    # unitarios + integración
 uv run pytest tests/unit         # solo unitarios (sin BD ni Docker)
 ```
 
-La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker; sin él se omite.
+La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker; sin él se omite en local, pero en CI el arranque fallido de Postgres rompe el build.
 
 ## 5. Cobertura
 
@@ -52,7 +53,20 @@ uv run coverage report --include='app/domain/*,app/security/*' --fail-under=100
 
 El reporte HTML queda en `htmlcov/index.html`.
 
-## 6. Estructura
+## 6. Integración continua
+
+[![CI](https://github.com/DESARROLLO2-PROYECTO/notificaciones-arquetipo/actions/workflows/ci.yml/badge.svg)](https://github.com/DESARROLLO2-PROYECTO/notificaciones-arquetipo/actions/workflows/ci.yml)
+
+`.github/workflows/ci.yml` corre en push a cualquier rama y en pull requests a `develop` y `main`. Los pasos
+van en orden y el primero que falla detiene el resto: pruebas unitarias, cobertura (global >= 80 % y 100 % en
+domain/security), ruff + mypy, build de la imagen Docker y análisis en SonarCloud. El resultado se ve en la
+pestaña Actions del repositorio.
+
+SonarCloud requiere el proyecto creado en sonarcloud.io (repo público), el secret `SONAR_TOKEN` y la variable
+de repo `SONAR_ENABLED=true`; sin la variable el paso se omite y el resto del pipeline sigue igual. El token solo
+lo ve el paso de Sonar, y un quality gate en rojo hace fallar el CI (`sonar.qualitygate.wait=true`).
+
+## 7. Estructura
 
 Anotada en [`docs/arquetipo/02_blueprint.md`](docs/arquetipo/02_blueprint.md).
 
@@ -67,7 +81,7 @@ migrations/            Alembic; 0001 crea la tabla equipos
 tests/unit | integration
 ```
 
-## 7. Decisiones de arquitectura
+## 8. Decisiones de arquitectura
 
 Detalle en [`docs/arquetipo/01_validacion.md`](docs/arquetipo/01_validacion.md).
 
@@ -81,7 +95,7 @@ Para añadir una entidad, copia el patrón de `Equipo`: modelo y migración, pue
 repositorio, DTO, `deps.py` y router (registrado en `main.py`), con su test unitario con fake del
 puerto y su test de integración.
 
-## 8. Limitaciones y siguientes pasos
+## 9. Limitaciones y siguientes pasos
 
 Limitaciones:
 
@@ -94,4 +108,4 @@ Siguientes pasos:
 - Resto de tablas del ER.
 - API Key.
 - Worker, Scheduler, Publisher y Mailer.
-- CI/CD.
+- CD.
