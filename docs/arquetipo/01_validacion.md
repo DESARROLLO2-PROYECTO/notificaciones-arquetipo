@@ -42,7 +42,7 @@ El DAS no trae ADRs formales. Estas son las decisiones implícitas:
 | D6 | Correo como canal alterno | Brevo por API HTTPS, detrás de un Adapter | Reemplazabilidad | En local, Mailpit por SMTP (C2) |
 | D7 | Autenticar servicios, no personas | API Key por rol con hash SHA-256, rotación de 2 llaves y script de alta | Sin usuarios ni pantallas | La llave en claro se muestra una sola vez |
 | D8 | Reintentos y expiración periódicos | Scheduler cada 5 min que llama a `ejecutar_ciclo` | Táctica Retry | Ver ⚠️ C1 |
-| D9 | Calidad continua | GitHub Actions (ruff, pytest, cobertura, imagen) + SonarCloud con quality gate; CD por SSH a EC2 | Exigencia del curso (DevOps) | Hacen falta secretos del repo (C5) (previsto, no implementado) |
+| D9 | Calidad continua | GitHub Actions (ruff, pytest, cobertura, imagen) + SonarCloud con quality gate; CD por SSH a EC2 | Exigencia del curso (DevOps) | CI implementado en `.github/workflows/ci.yml`; SonarCloud se activa con el secret `SONAR_TOKEN`; CD por SSH (previsto, no implementado) |
 
 No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
 
@@ -92,7 +92,7 @@ No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
 - **Despliegue:**
   - Un contenedor `notificaciones` con la API (Uvicorn), el worker, el cronjob y `crear_api_key.py`.
   - Un contenedor de monitoreo con Prometheus y Grafana.
-  - GitHub Actions construye, prueba y hace la imagen. SonarCloud aplica el quality gate. El despliegue llega por SSH. (previsto, no implementado)
+  - GitHub Actions prueba, mide la cobertura, analiza y construye la imagen; SonarCloud aplica el quality gate cuando existe `SONAR_TOKEN`. El despliegue por SSH sigue previsto, no implementado.
 - **Ambigüedad:** la física expone el 443, pero la API escucha en el 8000. Nadie termina TLS (ver ⚠️ C3).
 
 ## E. Stack
@@ -126,7 +126,7 @@ PRE-GENERATION VALIDATION REPORT
 - API Key por rol (inventario, fabricacion, notificaciones), hash SHA-256, máx. 2 activas, script de alta/baja
 - Catálogo de tipos en BD (emisor, destino, expiración); estado calculado a partir de fechas e intentos (previsto, no implementado)
 - Ciclo cada 5 min con FOR UPDATE SKIP LOCKED; tareas independientes (expirar, publicar, entregar, correo) (previsto, no implementado)
-- Contenedor Docker; CI en GitHub Actions + SonarCloud (previsto, no implementado)
+- Contenedor Docker; CI en GitHub Actions + SonarCloud (implementado; Sonar requiere `SONAR_TOKEN`)
 
 ⚠️ Flagged Concerns:
 - C1 Scheduler: el DAS dice "cronjob dentro del contenedor"; el PB (HU-NOT-02 c6) dice "un proceso programado
@@ -140,8 +140,8 @@ PRE-GENERATION VALIDATION REPORT
 - C4 (previsto, no implementado) Prometheus/Grafana y /metrics: están en el DAS, pero R1-R7 no los piden y una t2.micro (1 GB) queda justa.
   Propuesta: exponer /metrics en la API (prometheus-fastapi-instrumentator) y dejar el contenedor de monitoreo
   en un compose aparte (docker-compose.monitoring.yml).
-- C5 (previsto, no implementado) CD a EC2 y SonarCloud necesitan cuentas y secretos (SONAR_TOKEN, EC2_HOST, EC2_SSH_KEY). El workflow se genera
-  y queda listo, pero no se puede probar sin ellos.
+- C5 El CI ya corre en GitHub Actions. SonarCloud necesita crear el proyecto y el secret SONAR_TOKEN; mientras no exista, el paso se omite.
+  El CD a EC2 (EC2_HOST, EC2_SSH_KEY) sigue previsto, no implementado.
 - C6 Cobertura 100 %: el prompt la pide en "dominio y aplicación". Aquí equivale a app/domain + app/security.
   app/api y app/infrastructure se prueban con integración, no se exigen al 100 %.
 - C7 Adapter vs. diagrama: Domain «use» pika/httpx. Se implementa con protocolos en el dominio e
