@@ -1,4 +1,4 @@
-"""Flujo de punta a punta con Postgres real (testcontainers). Sin Docker, se omite."""
+"""Flujo de punta a punta con Postgres real (testcontainers). Sin Docker, se omite (en CI falla)."""
 
 import os
 from uuid import uuid4
@@ -16,6 +16,9 @@ def _postgres():
         contenedor = PostgresContainer(IMAGEN_PG, driver="psycopg")
         contenedor.start()
     except Exception as e:  # Docker no disponible
+        # En CI (CI=true en GitHub Actions) un arranque fallido rompe el build, no se omite.
+        if os.environ.get("CI"):
+            pytest.fail(f"Postgres no arrancó en CI: {e}")
         pytest.skip(f"Docker no disponible: {e}")
     os.environ["DATABASE_URL"] = contenedor.get_connection_url()
     yield

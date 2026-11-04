@@ -42,7 +42,7 @@ uv run pytest                    # unitarios + integración
 uv run pytest tests/unit         # solo unitarios (sin BD ni Docker)
 ```
 
-La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker; sin él se omite.
+La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker; sin él se omite en local, pero en CI el arranque fallido de Postgres rompe el build.
 
 ## 5. Cobertura
 
@@ -62,8 +62,9 @@ van en orden y el primero que falla detiene el resto: pruebas unitarias, cobertu
 domain/security), ruff + mypy, build de la imagen Docker y análisis en SonarCloud. El resultado se ve en la
 pestaña Actions del repositorio.
 
-SonarCloud requiere el proyecto creado en sonarcloud.io (repo público) y el secret `SONAR_TOKEN`; sin él, el
-paso se omite y el resto del pipeline sigue igual.
+SonarCloud requiere el proyecto creado en sonarcloud.io (repo público), el secret `SONAR_TOKEN` y la variable
+de repo `SONAR_ENABLED=true`; sin la variable el paso se omite y el resto del pipeline sigue igual. El token solo
+lo ve el paso de Sonar, y un quality gate en rojo hace fallar el CI (`sonar.qualitygate.wait=true`).
 
 ## 7. Estructura
 
