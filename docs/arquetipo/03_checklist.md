@@ -3,19 +3,19 @@
 Comandos de verificación (locales; el CI los repite):
 
 ```bash
-uv sync && uv run ruff check . && uv run ruff format --check . && uv run mypy app \
-  && uv run pytest --cov=app \
-  && uv run coverage report --include='app/domain/*,app/security/*' --fail-under=100 \
+uv sync && uv run ruff check . && uv run ruff format --check . && uv run mypy app && uv run lint-imports \
+  && uv run pytest --cov=app --cov-fail-under=80 \
+  && uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100 \
   && docker build -q .
 ```
 
 | Ítem | Estado | Evidencia |
 |---|---|---|
-| C01 Cada capa del DAS tiene su paquete | ✅ PASS | `app/api`, `app/domain`, `app/infrastructure`, `app/security`, `migrations/` |
-| C02 Cada patrón de la Fase 1 está implementado y anotado | ⚠️ PARTIAL | Implementados: multicapa, Controlador, Service, Repository, DTO/Validator (`security/schemas.py`), Health check (`api/health.py`), Unit of Work, inyección de dependencias. Pendientes por depender de una HU: API Key, Worker, Scheduler, Publisher, Mailer |
+| C01 Cada capa del DAS tiene su paquete | ✅ PASS | `app/api`, `app/domain`, `app/infrastructure`, `migrations/` |
+| C02 Cada patrón de la Fase 1 está implementado y anotado | ⚠️ PARTIAL | Implementados: multicapa, Controlador, Service, Repository, DTO/Validator (`api/schemas.py`), Health check (`api/routers/health.py`), Unit of Work, inyección de dependencias. Pendientes por depender de una HU: API Key, Worker, Scheduler, Publisher, Mailer |
 | C03 Flujo transaccional conectado de punta a punta | ✅ PASS | `POST /equipos` → `EquipoService.crear` → `EquipoRepo` → PostgreSQL → 201; `GET /equipos/{id}` lo lee |
-| C04 Cada método público de domain tiene test | ✅ PASS | `tests/unit/`, 100 % en `app/domain` y `app/security` |
-| C05 Cobertura configurada y comando en el README | ⚠️ PARTIAL | `fail_under = 80` global en `pyproject.toml`; el 100 % de domain y security lo exige el CI (`.github/workflows/ci.yml`) |
+| C04 Cada método público de domain tiene test | ✅ PASS | `tests/unit/`, 100 % en `app/domain` y `app/api/schemas.py` |
+| C05 Cobertura configurada y comando en el README | ⚠️ PARTIAL | `fail_under = 80` global en `pyproject.toml`; el 100 % de domain y schemas lo exige el CI (`.github/workflows/ci.yml`) |
 | C06 `docker compose up --build` arranca limpio | ✅ PASS | db y api healthy, `/health` → `{"status":"UP"}` y los curl de POST/GET responden como se espera |
 | C07 Sin secretos ni valores hardcodeados | ✅ PASS | Todo sale de `.env` o `pydantic-settings` |
 | C08 `.env.example` documenta cada variable | ✅ PASS | Cada variable con comentario y placeholder |

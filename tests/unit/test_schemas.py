@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.security.schemas import EquipoIn, EquipoOut
+from app.api.schemas import EquipoIn, EquipoOut
 
 
 @pytest.mark.parametrize("clave", ["esAdmin", "es_admin"])

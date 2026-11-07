@@ -76,10 +76,10 @@ No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
   - Los servidores de los equipos usan el 443 en los dos sentidos.
 - **Lógica:**
   - Paquetes:
-    - View Layer (`app/api`): API.
+    - View Layer (`app/api`): API y Pydantic/DTO (`schemas.py`).
     - Logic Layer (`app/domain`): Domain, Worker y Scheduler.
     - Infrastructure Layer (`app/infrastructure`): Repository y Model.
-    - Security Layer: Pydantic, API Key/HMAC.
+    - Security Layer: API Key/HMAC (previsto, no implementado).
     - Utility Layer: Swagger, aio-pika, httpx, SQLAlchemy y Alembic.
   - Dependencias:
     - API →«Inject» Domain.
@@ -119,7 +119,7 @@ El estilo en capas es adecuado para un microservicio pequeño, con 5 personas y 
 PRE-GENERATION VALIDATION REPORT
 ==================================
 ✅ Confirmed Decisions:
-- Capas View (app/api) → Logic (app/domain) → Infrastructure (app/infrastructure) + Security + Utility, por inyección
+- Capas View (app/api) → Logic (app/domain) → Infrastructure (app/infrastructure) + Utility, por inyección (Security con API Key/HMAC, pendiente)
 - Python 3.12 + FastAPI + Pydantic; PostgreSQL 16 + SQLAlchemy 2 + Alembic
 - RabbitMQ: exchange direct "notificaciones", cola notif.<destino>, mensaje = {id, tipo} (previsto, no implementado)
 - Webhook firmado HMAC-SHA256 (X-Notification-Id, X-Timestamp, X-Signature), timeout 10 s, 3 intentos
@@ -142,7 +142,7 @@ PRE-GENERATION VALIDATION REPORT
   en un compose aparte (docker-compose.monitoring.yml).
 - C5 El CI ya corre en GitHub Actions. SonarCloud necesita crear el proyecto, el secret SONAR_TOKEN y la variable SONAR_ENABLED=true; mientras no exista, el paso se omite.
   El CD a EC2 (EC2_HOST, EC2_SSH_KEY) sigue previsto, no implementado.
-- C6 Cobertura 100 %: el prompt la pide en "dominio y aplicación". Aquí equivale a app/domain + app/security.
+- C6 Cobertura 100 %: el prompt la pide en "dominio y aplicación". Aquí equivale a app/domain + app/api/schemas.py.
   app/api y app/infrastructure se prueban con integración, no se exigen al 100 %.
 - C7 Adapter vs. diagrama: Domain «use» pika/httpx. Se implementa con protocolos en el dominio e
   implementaciones en infrastructure (misma intención, testeable).
