@@ -9,10 +9,10 @@ arquetipo/
 │   ├── config.py               Configuración externa 12-factor                            [pydantic-settings]
 │   ├── api/                    ── VIEW ──
 │   │   ├── deps.py             Raíz de composición: sesión → EquipoRepo → EquipoService   [FastAPI Depends]
-│   │   ├── equipos.py          Router/Controlador (MVC): POST /equipos, GET /equipos/{id} [FastAPI APIRouter]
-│   │   └── health.py           GET /health                                                [FastAPI]
-│   ├── security/               ── SECURITY ──
-│   │   └── schemas.py          Validator / DTO: EquipoIn, EquipoOut                       [Pydantic v2]
+│   │   ├── schemas.py          Validator / DTO: EquipoIn, EquipoOut                       [Pydantic v2]
+│   │   └── routers/
+│   │       ├── equipos.py      Router/Controlador (MVC): POST /equipos, GET /equipos/{id} [FastAPI APIRouter]
+│   │       └── health.py       GET /health                                                [FastAPI]
 │   ├── domain/                 ── LOGIC ──
 │   │   ├── puertos.py          Entidad Equipo + EquipoRepository (Repository, puerto)     [dataclass, Protocol]
 │   │   ├── errores.py          ErrorDominio, NoEncontrado, NombreDuplicado                [Python]
