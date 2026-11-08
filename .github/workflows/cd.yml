@@ -1,0 +1,53 @@
+name: CD
+
+# Corre solo cuando el CI termina en verde sobre un push a main (el CI ya publicó la imagen en Docker Hub).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Dos despliegues no se cruzan: el segundo espera al primero.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && vars.DEPLOY_ENABLED == 'true' && vars.DOCKERHUB_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Desplegar en EC2 y verificar /health
+        # La llave SSH vive solo en este paso; el host se verifica contra EC2_KNOWN_HOSTS.
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/notificaciones:${{ github.event.workflow_run.head_sha }}
+        run: |
+          trap 'rm -f ~/ec2.pem ~/ec2_known_hosts' EXIT
+          install -m 600 /dev/null ~/ec2.pem
+          printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > ~/ec2.pem
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/ec2_known_hosts
+          SSH_OPTS=(-i ~/ec2.pem -o UserKnownHostsFile=$HOME/ec2_known_hosts -o StrictHostKeyChecking=yes)
+          scp "${SSH_OPTS[@]}" docker-compose.prod.yml "$EC2_USER@$EC2_HOST:notificaciones/"
+          ssh "${SSH_OPTS[@]}" "$EC2_USER@$EC2_HOST" bash -s <<REMOTO
+          set -e
+          cd ~/notificaciones
+          sed -i 's|^API_IMAGE=.*|API_IMAGE=$IMAGE|' .env
+          docker compose -f docker-compose.prod.yml pull api
+          docker compose -f docker-compose.prod.yml up -d
+          PORT=\$(grep -oP '^API_PORT=\K.*' .env || echo 8090)
+          for i in \$(seq 1 30); do
+            curl -fsS "http://localhost:\$PORT/health" && echo " API UP" && exit 0
+            sleep 2
+          done
+          echo "La API no respondió en /health"; docker compose -f docker-compose.prod.yml logs --tail 50 api; exit 1
+          REMOTO

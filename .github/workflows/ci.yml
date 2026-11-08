@@ -9,11 +9,6 @@ on:
 permissions:
   contents: read
 
-# Dos pushes seguidos a main no despliegan fuera de orden: el segundo espera al primero.
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   ci:
     runs-on: ubuntu-24.04
@@ -43,7 +38,8 @@ jobs:
       - name: SonarCloud
         # Se activa con la variable de repo SONAR_ENABLED=true (los secrets no se pueden usar en un if).
         # El token vive solo en este paso: las pruebas y el build no lo ven.
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        # Solo en PR y en develop (rama principal en SonarCloud): el plan gratuito no analiza otras ramas; lo que llega a main ya pasó por su PR.
+        if: ${{ vars.SONAR_ENABLED == 'true' && (github.event_name == 'pull_request' || github.ref_name == 'develop') }}
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9  # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -60,20 +56,3 @@ jobs:
           docker tag notificaciones:ci "$DOCKERHUB_USERNAME/notificaciones:${{ github.ref_name }}"
           docker push "$DOCKERHUB_USERNAME/notificaciones:${{ github.sha }}"
           docker push "$DOCKERHUB_USERNAME/notificaciones:${{ github.ref_name }}"
-      - name: Desplegar en EC2 (CD)
-        # Solo en push a main, con la imagen ya publicada y la variable de repo DEPLOY_ENABLED=true.
-        # El EC2 baja la imagen del commit y reinicia la API; la llave SSH vive solo en este paso.
-        if: ${{ vars.DEPLOY_ENABLED == 'true' && vars.DOCKERHUB_ENABLED == 'true' && github.event_name == 'push' && github.ref_name == 'main' }}
-        env:
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
-          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/notificaciones:${{ github.sha }}
-        run: |
-          trap 'rm -f ~/ec2.pem ~/ec2_known_hosts' EXIT
-          install -m 600 /dev/null ~/ec2.pem
-          printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > ~/ec2.pem
-          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/ec2_known_hosts
-          ssh -i ~/ec2.pem -o UserKnownHostsFile=~/ec2_known_hosts -o StrictHostKeyChecking=yes "$EC2_USER@$EC2_HOST" \
-            "cd ~/notificaciones && sed -i 's|^API_IMAGE=.*|API_IMAGE=$IMAGE|' .env && docker compose pull api && docker compose up -d --no-build"
