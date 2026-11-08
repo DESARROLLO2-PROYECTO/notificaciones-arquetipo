@@ -17,6 +17,8 @@ services:
 
   api:
     build: .
+    # En local se compila; en el EC2 (CD) API_IMAGE apunta a la imagen de Docker Hub y se usa --no-build
+    image: ${API_IMAGE:-notificaciones:local}
     env_file: .env
     ports:
       - "${API_PORT:-8090}:8000"
