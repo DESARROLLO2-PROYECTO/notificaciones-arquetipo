@@ -19,6 +19,7 @@ package = false
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "import-linter>=2.16",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
@@ -45,10 +46,26 @@ pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["app"]
+relative_files = true
 branch = true
 
 [tool.coverage.report]
-# Global >= 80 %. Domain + security al 100 %:
-#   coverage report --include='app/domain/*,app/security/*' --fail-under=100
+# Global >= 80 %. Domain + schemas al 100 %:
+#   coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
 fail_under = 80
 show_missing = true
+
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Capas: api > infrastructure > domain"
+type = "layers"
+layers = ["app.api", "app.infrastructure", "app.domain"]
+
+[[tool.importlinter.contracts]]
+name = "El dominio no depende de frameworks"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = ["sqlalchemy", "fastapi", "pydantic"]

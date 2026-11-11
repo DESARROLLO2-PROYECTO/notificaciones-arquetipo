@@ -42,7 +42,7 @@ El DAS no trae ADRs formales. Estas son las decisiones implícitas:
 | D6 | Correo como canal alterno | Brevo por API HTTPS, detrás de un Adapter | Reemplazabilidad | En local, Mailpit por SMTP (C2) |
 | D7 | Autenticar servicios, no personas | API Key por rol con hash SHA-256, rotación de 2 llaves y script de alta | Sin usuarios ni pantallas | La llave en claro se muestra una sola vez |
 | D8 | Reintentos y expiración periódicos | Scheduler cada 5 min que llama a `ejecutar_ciclo` | Táctica Retry | Ver ⚠️ C1 |
-| D9 | Calidad continua | GitHub Actions (ruff, pytest, cobertura, imagen) + SonarCloud con quality gate; CD por SSH a EC2 | Exigencia del curso (DevOps) | Hacen falta secretos del repo (C5) (previsto, no implementado) |
+| D9 | Calidad continua | GitHub Actions (ruff, pytest, cobertura, imagen) + SonarCloud con quality gate; CD por SSH a EC2 | Exigencia del curso (DevOps) | CI implementado en `.github/workflows/ci.yml`; SonarCloud se activa con el secret `SONAR_TOKEN` y la variable `SONAR_ENABLED=true`; CD por SSH (previsto, no implementado) |
 
 No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
 
@@ -76,10 +76,10 @@ No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
   - Los servidores de los equipos usan el 443 en los dos sentidos.
 - **Lógica:**
   - Paquetes:
-    - View Layer (`app/api`): API.
+    - View Layer (`app/api`): API y Pydantic/DTO (`schemas.py`).
     - Logic Layer (`app/domain`): Domain, Worker y Scheduler.
     - Infrastructure Layer (`app/infrastructure`): Repository y Model.
-    - Security Layer: Pydantic, API Key/HMAC.
+    - Security Layer: API Key/HMAC (previsto, no implementado).
     - Utility Layer: Swagger, aio-pika, httpx, SQLAlchemy y Alembic.
   - Dependencias:
     - API →«Inject» Domain.
@@ -92,7 +92,7 @@ No hay decisiones contradictorias. D8 y D9 tienen huecos de detalle; van abajo.
 - **Despliegue:**
   - Un contenedor `notificaciones` con la API (Uvicorn), el worker, el cronjob y `crear_api_key.py`.
   - Un contenedor de monitoreo con Prometheus y Grafana.
-  - GitHub Actions construye, prueba y hace la imagen. SonarCloud aplica el quality gate. El despliegue llega por SSH. (previsto, no implementado)
+  - GitHub Actions prueba, mide la cobertura, analiza y construye la imagen; SonarCloud aplica el quality gate cuando `SONAR_ENABLED=true` (un gate en rojo falla el CI). El despliegue por SSH sigue previsto, no implementado.
 - **Ambigüedad:** la física expone el 443, pero la API escucha en el 8000. Nadie termina TLS (ver ⚠️ C3).
 
 ## E. Stack
@@ -119,35 +119,39 @@ El estilo en capas es adecuado para un microservicio pequeño, con 5 personas y 
 PRE-GENERATION VALIDATION REPORT
 ==================================
 ✅ Confirmed Decisions:
-- Capas View (app/api) → Logic (app/domain) → Infrastructure (app/infrastructure) + Security + Utility, por inyección
+- Capas View (app/api) → Logic (app/domain) → Infrastructure (app/infrastructure) + Utility, por inyección (Security con API Key/HMAC, pendiente)
 - Python 3.12 + FastAPI + Pydantic; PostgreSQL 16 + SQLAlchemy 2 + Alembic
 - RabbitMQ: exchange direct "notificaciones", cola notif.<destino>, mensaje = {id, tipo} (previsto, no implementado)
 - Webhook firmado HMAC-SHA256 (X-Notification-Id, X-Timestamp, X-Signature), timeout 10 s, 3 intentos
 - API Key por rol (inventario, fabricacion, notificaciones), hash SHA-256, máx. 2 activas, script de alta/baja
 - Catálogo de tipos en BD (emisor, destino, expiración); estado calculado a partir de fechas e intentos (previsto, no implementado)
 - Ciclo cada 5 min con FOR UPDATE SKIP LOCKED; tareas independientes (expirar, publicar, entregar, correo) (previsto, no implementado)
-- Contenedor Docker; CI en GitHub Actions + SonarCloud (previsto, no implementado)
+- Contenedor Docker; CI en GitHub Actions + SonarCloud (implementado; Sonar requiere `SONAR_TOKEN` y `SONAR_ENABLED=true`)
 
 ⚠️ Flagged Concerns:
 - C1 Scheduler: el DAS dice "cronjob dentro del contenedor"; el PB (HU-NOT-02 c6) dice "un proceso programado
   externo llama POST /notificaciones/ciclo". Propuesta: tarea asyncio periódica dentro del contenedor que llama a
   ejecutar_ciclo(), y se conserva POST /notificaciones/ciclo (solo admin) para disparo manual y pruebas.
-- C2 docker-compose local: el DAS usa servicios gestionados (Neon, CloudAMQP, Brevo). El compose levanta
-  postgres, rabbitmq y mailpit como [Archetype Convention Addition] (paridad dev/prod, 12-factor X).
-  El Mailer tiene dos adapters: Brevo (prod) y SMTP (local).
+- C2 docker-compose local: el DAS usa servicios gestionados (Neon, CloudAMQP, Brevo). El compose solo levanta
+  postgres como [Archetype Convention Addition] (paridad dev/prod); en producción basta apuntar DATABASE_URL a Neon.
+  RabbitMQ y el correo llegan con sus HU.
 - C3 TLS: la vista física expone el 443 pero la API escucha en el 8000; el DAS no dice quién termina TLS.
   Propuesta: dejarlo fuera del arquetipo y documentarlo como siguiente paso (Caddy/Nginx o ALB).
 - C4 (previsto, no implementado) Prometheus/Grafana y /metrics: están en el DAS, pero R1-R7 no los piden y una t2.micro (1 GB) queda justa.
   Propuesta: exponer /metrics en la API (prometheus-fastapi-instrumentator) y dejar el contenedor de monitoreo
   en un compose aparte (docker-compose.monitoring.yml).
-- C5 (previsto, no implementado) CD a EC2 y SonarCloud necesitan cuentas y secretos (SONAR_TOKEN, EC2_HOST, EC2_SSH_KEY). El workflow se genera
-  y queda listo, pero no se puede probar sin ellos.
-- C6 Cobertura 100 %: el prompt la pide en "dominio y aplicación". Aquí equivale a app/domain + app/security.
+- C5 El CI ya corre en GitHub Actions. SonarCloud necesita crear el proyecto, el secret SONAR_TOKEN y la variable SONAR_ENABLED=true; mientras no exista, el paso se omite.
+  El CD a EC2 (EC2_HOST, EC2_SSH_KEY) sigue previsto, no implementado.
+- C6 Cobertura 100 %: el prompt la pide en "dominio y aplicación". Aquí equivale a app/domain + app/api/schemas.py.
   app/api y app/infrastructure se prueban con integración, no se exigen al 100 %.
 - C7 Adapter vs. diagrama: Domain «use» pika/httpx. Se implementa con protocolos en el dominio e
   implementaciones en infrastructure (misma intención, testeable).
-- C8 Alcance: el prompt exige un flujo transaccional e2e; el plan es cubrir las 17 HU del PB, lo que adelanta
-  los sprints 2-4. La evidencia de Scrum tendría que verse en commits por HU.
+- C8 Alcance: el prompt exige un flujo transaccional e2e. Resuelto: el arquetipo implementa solo el ejemplo
+  Equipo (POST/GET /equipos); ninguna HU del PB.
+
+Cómo queda cada concern en el arquetipo: C1, C4, C5 y C7 → README §9 "Siguientes pasos"; C2 → resuelto en
+docker-compose.yml (solo postgres); C3 → README §9 "Limitaciones"; C6 → resuelto (README §5, 100 % en
+app/domain y app/api/schemas.py); C8 → resuelto (solo Equipo).
 
 ❌ Blocking Issues:
 - Ninguno.
