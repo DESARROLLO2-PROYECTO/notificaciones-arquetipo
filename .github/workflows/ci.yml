@@ -22,22 +22,37 @@ jobs:
       - run: uv sync --frozen
       - name: Pruebas unitarias
         run: uv run pytest tests/unit
-      - name: Cobertura (global >= 80 %, domain y security 100 %)
+      - name: Cobertura (global >= 80 %, domain y schemas 100 %)
         # incluye integración (testcontainers usa el Docker del runner)
         run: |
-          uv run pytest --cov=app --cov-report=xml
-          uv run coverage report --include='app/domain/*,app/security/*' --fail-under=100
+          uv run pytest --cov=app --cov-report=xml --cov-fail-under=80
+          uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
       - name: Análisis estático
         run: |
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy
+          uv run lint-imports
       - name: Build de la imagen Docker
-        run: docker build .
+        run: docker build -t notificaciones:ci .
       - name: SonarCloud
         # Se activa con la variable de repo SONAR_ENABLED=true (los secrets no se pueden usar en un if).
         # El token vive solo en este paso: las pruebas y el build no lo ven.
-        if: ${{ vars.SONAR_ENABLED == 'true' }}
+        # Solo en PR y en develop (rama principal en SonarCloud): el plan gratuito no analiza otras ramas; lo que llega a main ya pasó por su PR.
+        if: ${{ vars.SONAR_ENABLED == 'true' && (github.event_name == 'pull_request' || github.ref_name == 'develop') }}
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9  # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Publicar imagen en Docker Hub
+        # Después de Sonar: un quality gate en rojo no publica. Solo en push a develop o main y con la variable de repo DOCKERHUB_ENABLED=true (los secrets no se pueden usar en un if).
+        # Las credenciales viven solo en este paso.
+        if: ${{ vars.DOCKERHUB_ENABLED == 'true' && github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          docker login -u "$DOCKERHUB_USERNAME" --password-stdin <<< "$DOCKERHUB_TOKEN"
+          docker tag notificaciones:ci "$DOCKERHUB_USERNAME/notificaciones:${{ github.sha }}"
+          docker tag notificaciones:ci "$DOCKERHUB_USERNAME/notificaciones:${{ github.ref_name }}"
+          docker push "$DOCKERHUB_USERNAME/notificaciones:${{ github.sha }}"
+          docker push "$DOCKERHUB_USERNAME/notificaciones:${{ github.ref_name }}"

@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 from app.api.deps import ServicioDep
-from app.security.schemas import EquipoIn, EquipoOut
+from app.api.schemas import EquipoIn, EquipoOut
 
 router = APIRouter(prefix="/equipos", tags=["equipos"])
 
