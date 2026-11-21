@@ -5,8 +5,12 @@
 Arquetipo mínimo de un servicio REST en FastAPI con capas estrictas `app/api` → `app/domain` ←
 `app/infrastructure`; la validación Pydantic (DTO) vive en `app/api/schemas.py`. El dominio define puertos
 (Protocols) y la infraestructura los implementa con SQLAlchemy 2 sobre PostgreSQL 16; una
-transacción por solicitud (commit al final, rollback ante error). Incluye un único flujo
-transaccional sobre la entidad `Equipo` (tabla `equipos` del ER del DAS) y ninguna HU.
+transacción por solicitud (commit al final, rollback ante error). Incluye el flujo
+transaccional de `Equipo` y HU-NOT-11: generación y desactivación de API Keys por consola.
+La autenticación de los endpoints corresponde a HU-NOT-12 y sigue pendiente.
+
+El alcance, las tareas técnicas y la demostración de HU-NOT-11 están en
+[`docs/sprint1/hu-not-11.md`](docs/sprint1/hu-not-11.md).
 
 ## 2. Prerrequisitos
 
@@ -110,7 +114,6 @@ Limitaciones:
 Siguientes pasos:
 
 - Resto de tablas del ER.
-- API Key.
+- Autenticación y autorización HTTP con API Key (HU-NOT-12).
 - Worker, Scheduler, Publisher y Mailer.
 - Monitoreo: /metrics con Prometheus y Grafana.
-- CD.
