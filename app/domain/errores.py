@@ -13,3 +13,6 @@ class NoEncontrado(ErrorDominio):
 
 class NombreDuplicado(ErrorDominio):
     """409"""
+
+class ClaveDuplicada(ErrorDominio):
+    """409"""
