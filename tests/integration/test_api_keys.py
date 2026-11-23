@@ -26,9 +26,9 @@ def limpiar_llaves(postgres):
 
 
 def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
-    def cli(*args):
+    def cli(modulo, *args):
         return subprocess.run(
-            [sys.executable, "-m", "app.cli.api_keys", *args],
+            [sys.executable, "-m", f"scripts.{modulo}", *args],
             capture_output=True,
             text=True,
             check=False,
@@ -36,7 +36,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
         )
 
     def generar():
-        resultado = cli("generar", "--rol", "notificaciones")
+        resultado = cli("crear_api_key", "--rol", "notificaciones")
         assert resultado.returncode == 0, resultado.stderr
         lineas = resultado.stdout.splitlines()
         id = int(lineas[0].split(": ", 1)[1])
@@ -46,7 +46,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
 
     id, llave = generar()
     _, segunda = generar()
-    fallo = cli("generar", "--rol", "notificaciones")
+    fallo = cli("crear_api_key", "--rol", "notificaciones")
     assert fallo.returncode == 1
     assert "Ya existen dos llaves activas para este rol" in fallo.stderr
     assert fallo.stdout == ""
@@ -65,11 +65,11 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
         assert llave not in str(valores)
         assert segunda not in str(valores)
 
-    baja = cli("desactivar", "--id", str(id))
+    baja = cli("desactivar_api_key", "--id", str(id))
     assert baja.returncode == 0
     assert llave not in baja.stdout + baja.stderr
-    assert cli("desactivar", "--id", str(id)).returncode == 0
-    assert cli("desactivar", "--id", "999999").returncode == 1
+    assert cli("desactivar_api_key", "--id", str(id)).returncode == 0
+    assert cli("desactivar_api_key", "--id", "999999").returncode == 1
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
         assert repo.obtener_activa_por_hash(hash_llave) is None

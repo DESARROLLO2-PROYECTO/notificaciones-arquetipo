@@ -13,6 +13,7 @@ RUN useradd --system --uid 10001 --no-create-home app
 COPY --from=builder /app/.venv .venv
 COPY app app
 COPY migrations migrations
+COPY scripts scripts
 COPY alembic.ini .
 USER app
 EXPOSE 8000

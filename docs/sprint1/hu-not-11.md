@@ -19,7 +19,7 @@ necesario para conseguirlo. No son historias nuevas ni puntos adicionales al bac
 |---|---|---|
 | TS-11-01 | Persistir API Keys y preparar los tres roles | Modelo `ApiKey`, migración `0002`, puerto en `app/domain/puertos.py` y `ApiKeyRepo` en `app/infrastructure/repositories.py` |
 | TS-11-02 | Generar, limitar a dos activas y desactivar | `ApiKeyService`; bloqueo por equipo durante la generación |
-| TS-11-03 | Proporcionar el script de administración | `python -m app.cli.api_keys`; salida tras el commit |
+| TS-11-03 | Proporcionar los scripts de administración | `scripts/crear_api_key.py` y `scripts/desactivar_api_key.py` |
 | TS-11-04 | Comprobar criterios y documentar uso | Pruebas unitarias y de integración con PostgreSQL |
 
 ## Criterios de aceptación
@@ -43,9 +43,9 @@ Con la API y PostgreSQL iniciados mediante `docker compose up --build -d`, el co
 aplica las migraciones al arrancar. Ejecutar desde la raíz del repositorio:
 
 ```bash
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
 ```
 
 Las primeras dos operaciones muestran sus respectivos identificadores y llaves; la tercera
@@ -55,9 +55,9 @@ La salida de generación contiene la credencial: no adjuntarla a evidencias, com
 Usar el ID devuelto por la primera operación para desactivarla (reemplazar `<id>`):
 
 ```bash
-docker compose exec api python -m app.cli.api_keys desactivar --id <id>
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol notificaciones
+docker compose exec api python -m scripts.desactivar_api_key --id <id>
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol notificaciones
 ```
 
 Desactivar libera un cupo del rol; la otra llave de Inventario permanece activa. La última
@@ -69,8 +69,8 @@ desde el equipo y ejecutar:
 ```bash
 uv sync --frozen
 uv run alembic upgrade head
-uv run python -m app.cli.api_keys generar --rol inventario
-uv run python -m app.cli.api_keys desactivar --id <id>
+uv run python -m scripts.crear_api_key --rol inventario
+uv run python -m scripts.desactivar_api_key --id <id>
 ```
 
 La dirección `db` del `.env.example` solo funciona dentro de la red de Docker Compose.
@@ -99,7 +99,7 @@ por prefijo ni aceptar llaves inactivas.
 
 ```bash
 uv run pytest tests/unit
-uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+uv run pytest --cov=app --cov=scripts --cov-report=term-missing --cov-fail-under=80
 uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
 uv run ruff check .
 uv run ruff format --check .

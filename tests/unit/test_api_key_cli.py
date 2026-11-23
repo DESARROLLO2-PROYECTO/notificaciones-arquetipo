@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.cli import api_keys
 from app.domain.api_key_service import ApiKeyGenerada, LimiteLlavesActivas
+from scripts import api_keys
 
 
 @pytest.fixture
