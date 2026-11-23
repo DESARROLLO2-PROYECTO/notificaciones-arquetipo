@@ -6,8 +6,8 @@ from collections.abc import Sequence
 
 from app.domain.api_key_service import ApiKeyService, validar_rol
 from app.domain.errores import ErrorDominio
-from app.infrastructure.api_key_repository import ApiKeyRepo
 from app.infrastructure.db import transaccion
+from app.infrastructure.repositories import ApiKeyRepo
 
 
 def main(argv: Sequence[str] | None = None) -> int:
