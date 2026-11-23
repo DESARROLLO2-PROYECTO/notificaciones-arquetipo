@@ -1,4 +1,4 @@
-"""Excepciones de dominio; la capa API las traduce a HTTP (404/409)."""
+"""Excepciones de dominio que la capa API traduce a respuestas HTTP."""
 
 
 class ErrorDominio(Exception):
@@ -13,3 +13,7 @@ class NoEncontrado(ErrorDominio):
 
 class NombreDuplicado(ErrorDominio):
     """409"""
+
+
+class NoAutenticado(ErrorDominio):
+    """401"""

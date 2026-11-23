@@ -8,11 +8,12 @@ from fastapi.responses import JSONResponse
 
 from app.api.routers import equipos, health
 from app.config import get_settings
-from app.domain.errores import ErrorDominio, NoEncontrado, NombreDuplicado
+from app.domain.errores import ErrorDominio, NoAutenticado, NoEncontrado, NombreDuplicado
 
 log = logging.getLogger(__name__)
 
 _ESTADOS: dict[type[ErrorDominio], int] = {
+    NoAutenticado: 401,
     NoEncontrado: 404,
     NombreDuplicado: 409,
 }

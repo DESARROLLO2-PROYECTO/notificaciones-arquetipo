@@ -2,12 +2,18 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Depends, Path
 
 from app.api.deps import ServicioDep
 from app.api.schemas import EquipoIn, EquipoOut
+from app.security.api_key import exigir_api_key
 
-router = APIRouter(prefix="/equipos", tags=["equipos"])
+router = APIRouter(
+    prefix="/equipos",
+    tags=["equipos"],
+    dependencies=[Depends(exigir_api_key)],
+    responses={401: {"description": "Acceso denegado"}},
+)
 
 
 @router.post("", status_code=201, response_model=EquipoOut, response_model_by_alias=True)

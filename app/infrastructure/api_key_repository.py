@@ -47,7 +47,7 @@ class ApiKeyRepo:
         return actualizado is not None
 
     def obtener_activa_por_hash(self, hash_llave: str) -> str | None:
-        """Busca en la base de datos el hash correspondiente y devuelve el nombre del equipo de la hash si esta activa."""
+        """Devuelve el nombre del equipo asociado al hash de una llave activa."""
         return self._s.scalar(
             select(Equipo.nombre)
             .select_from(ApiKey)
