@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.domain import puertos
 from app.domain.errores import NombreDuplicado, ClaveDuplicada
 from app.infrastructure import models as m
+from uuid import UUID
 
 
 def _a_dominio(r: m.Equipo) -> puertos.Equipo:
@@ -64,3 +65,51 @@ class TipoNotificacionRepo:
     def obtener(self, codigo: str) -> puertos.TipoNotificacion | None:
         r = self._s.get(m.TipoNotificacion, codigo)
         return None if r is None else _tipo_notificacion_a_dominio(r)
+
+def _notificacion_a_dominio(r: m.Notificacion) -> puertos.Notificacion:
+    return puertos.Notificacion(
+        id=r.id,
+        tipo=r.tipo,
+        creada_at=r.creada_at,
+        intentos_publicacion=r.intentos_publicacion,
+        intentos_entrega=r.intentos_entrega,
+        publicada_at=r.publicada_at,
+        ultimo_error_publicacion=r.ultimo_error_publicacion,
+        proximo_intento_entrega=r.proximo_intento_entrega,
+        ultimo_error_entrega=r.ultimo_error_entrega,
+        leida_at=r.leida_at,
+        equipo_emisor_id=r.equipo_emisor_id,
+        equipo_destino_id=r.equipo_destino_id,
+        payload=r.payload,
+    )
+
+
+class NotificacionRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def crear(self, notificacion: puertos.Notificacion) -> puertos.Notificacion:
+        registro = m.Notificacion(
+            tipo=notificacion.tipo,
+            creada_at=notificacion.creada_at,
+            intentos_publicacion=notificacion.intentos_publicacion,
+            intentos_entrega=notificacion.intentos_entrega,
+            publicada_at=notificacion.publicada_at,
+            ultimo_error_publicacion=notificacion.ultimo_error_publicacion,
+            proximo_intento_entrega=notificacion.proximo_intento_entrega,
+            ultimo_error_entrega=notificacion.ultimo_error_entrega,
+            leida_at=notificacion.leida_at,
+            equipo_emisor_id=notificacion.equipo_emisor_id,
+            equipo_destino_id=notificacion.equipo_destino_id,
+            payload=notificacion.payload,
+        )
+        if notificacion.id is not None:
+            registro.id = notificacion.id
+
+        self._s.add(registro)
+        self._s.flush()
+        return _notificacion_a_dominio(registro)
+
+    def obtener(self, id: UUID) -> puertos.Notificacion | None:
+        r = self._s.get(m.Notificacion, id)
+        return None if r is None else _notificacion_a_dominio(r)
