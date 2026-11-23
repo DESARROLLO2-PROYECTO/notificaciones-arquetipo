@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
 from typing import Protocol, Any
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -48,3 +49,20 @@ class Notificacion:
     payload: dict[str, Any] | list[str] | None = None
     id: UUID | None = None
 
+
+"""
+Listado ENUM de motivos válidos para la resolución de la alerta
+"""
+class ResolucionAlerta(StrEnum):
+    EMISOR = "emisor"
+    EXPIRACION = "expiracion"
+
+@dataclass(frozen=True)
+class Alerta:
+    tipo: str
+    clave: str
+    notificacion_id: UUID 
+    creada_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    expira_at: datetime | None = None
+    motivo_resolucion: ResolucionAlerta | None = None
+    id: int | None  = None

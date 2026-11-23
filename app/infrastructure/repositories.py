@@ -113,3 +113,45 @@ class NotificacionRepo:
     def obtener(self, id: UUID) -> puertos.Notificacion | None:
         r = self._s.get(m.Notificacion, id)
         return None if r is None else _notificacion_a_dominio(r)
+
+
+def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
+    return puertos.Alerta(
+        id=r.id,
+        tipo=r.tipo,
+        clave=r.clave,
+        notificacion_id=r.notificacion_id,
+        creada_at=r.creada_at,
+        expira_at=r.expira_at,
+        motivo_resolucion=(
+            None
+            if r.motivo_resolucion is None
+            else puertos.ResolucionAlerta(r.motivo_resolucion)
+        ),
+    )
+
+
+class AlertaRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def crear(self, alerta: puertos.Alerta) -> puertos.Alerta:
+        registro = m.Alerta(
+            tipo=alerta.tipo,
+            clave=alerta.clave,
+            notificacion_id=alerta.notificacion_id,
+            creada_at=alerta.creada_at,
+            expira_at=alerta.expira_at,
+            motivo_resolucion=(
+                None
+                if alerta.motivo_resolucion is None
+                else str(alerta.motivo_resolucion)
+            ),
+        )
+        self._s.add(registro)
+        self._s.flush()
+        return _alerta_a_dominio(registro)
+
+    def obtener(self, id: int) -> puertos.Alerta | None:
+        r = self._s.get(m.Alerta, id)
+        return None if r is None else _alerta_a_dominio(r)
