@@ -46,8 +46,11 @@ class ApiKeyRepo:
         )
         return actualizado is not None
 
-    def obtener_activa_por_hash(self, hash_llave: str) -> ApiKey | None:
-        """Punto de integración para HU-NOT-12: excluye las llaves revocadas."""
+    def obtener_activa_por_hash(self, hash_llave: str) -> str | None:
+        """Busca en la base de datos el hash correspondiente y devuelve el nombre del equipo de la hash si esta activa."""
         return self._s.scalar(
-            select(ApiKey).where(ApiKey.hash == hash_llave, ApiKey.activa.is_(True))
+            select(Equipo.nombre)
+            .select_from(ApiKey)
+            .join(Equipo, ApiKey.equipo_id == Equipo.id)
+            .where(ApiKey.hash == hash_llave, ApiKey.activa.is_(True))
         )
