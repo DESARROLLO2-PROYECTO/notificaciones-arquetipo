@@ -1,7 +1,7 @@
 """Modelo ORM (ER del DAS)."""
 
 from typing import Any
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, JSON, Uuid, Text
+from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, JSON, Uuid, Text, Index, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -68,3 +68,12 @@ class Alerta(Base):
     )
     expira_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     motivo_resolucion: Mapped[str | None] = mapped_column(String(30))
+    __table_args__ = (
+        Index(
+            "uq_alerta_activa_tipo_clave",
+            "tipo",
+            "clave",
+            unique=True,
+            postgresql_where=text("motivo_resolucion IS NULL"),
+        ),
+    )

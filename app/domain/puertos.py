@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import Protocol, Any
+from types import TracebackType
 from enum import StrEnum
 
 
@@ -20,7 +21,6 @@ class EquipoRepository(Protocol):
     def obtener(self, id: int) -> Equipo | None: ...
 
 
-
 @dataclass(frozen=True)
 class TipoNotificacion:
     """Define un tipo de notificación entre equipos.
@@ -28,14 +28,19 @@ class TipoNotificacion:
     campo_clave: str
     ttl_alerta_min: int
     activo: bool
-    codigo: str | None = None
+    codigo: str
     equipo_emisor_id: int | None = None
     equipo_destino_id: int | None = None
     schema: dict[str, Any] | list[str] | None = None
 
+class TipoNotificacionRepository(Protocol):
+    def crear(self, tipo_notificacion: TipoNotificacion) -> TipoNotificacion: ...
+    def obtener_por_codigo(self, codigo: str) -> TipoNotificacion | None: ...
+
 @dataclass(frozen=True)
 class Notificacion:
     tipo: str
+    id: UUID = field(default_factory=uuid4)
     creada_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     intentos_publicacion: int = 0
     intentos_entrega: int = 0
@@ -47,7 +52,10 @@ class Notificacion:
     equipo_emisor_id: int | None = None
     equipo_destino_id: int | None = None
     payload: dict[str, Any] | list[str] | None = None
-    id: UUID | None = None
+
+class NotificacionRepository(Protocol):
+    def crear(self, notificacion: Notificacion) -> Notificacion: ...
+    def obtener(self, id: UUID) -> Notificacion | None: ...
 
 
 """
@@ -66,3 +74,26 @@ class Alerta:
     expira_at: datetime | None = None
     motivo_resolucion: ResolucionAlerta | None = None
     id: int | None  = None
+
+class AlertaRepository(Protocol):
+    def crear(self, alerta: Alerta) -> Alerta: ...
+    def obtener_activa(self, tipo: str) -> Alerta | None: ...
+
+
+"""
+Permite garantizar unicidad de transacción
+"""
+class UnitOfWork(Protocol):
+    tipos: TipoNotificacionRepository
+    notificaciones: NotificacionRepository
+    alertas: AlertaRepository
+
+    def __enter__(self) -> "UnitOfWork": ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None: ...
+    def commit(self) -> None: ...
+    def rollback(self) -> None: ...

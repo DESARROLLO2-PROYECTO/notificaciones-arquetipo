@@ -16,3 +16,12 @@ class NombreDuplicado(ErrorDominio):
 
 class ClaveDuplicada(ErrorDominio):
     """409"""
+
+
+class TipoNotificacionInvalido(ErrorDominio):
+    """409"""
+    
+
+class ClaveAlertaFaltante(ErrorDominio):
+    """400"""
+    
