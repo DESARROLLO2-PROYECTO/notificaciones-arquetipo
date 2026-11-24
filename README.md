@@ -51,7 +51,7 @@ La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker
 ## 5. Cobertura
 
 ```bash
-uv run pytest --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=80   # falla si global < 80 %
+uv run pytest --cov=app --cov=scripts --cov-report=term-missing --cov-report=html --cov-fail-under=80
 uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
 ```
 

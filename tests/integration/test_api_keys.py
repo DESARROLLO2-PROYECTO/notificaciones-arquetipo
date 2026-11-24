@@ -2,6 +2,7 @@ import hashlib
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from threading import Barrier
 
 import pytest
@@ -14,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.domain.api_key_service import ApiKeyService, LimiteLlavesActivas
 from app.domain.errores import NoEncontrado
-from app.infrastructure.api_key_repository import ApiKeyRepo
 from app.infrastructure.models import ApiKey, Base, Equipo
+from app.infrastructure.repositories import ApiKeyRepo
 
 
 @pytest.fixture(autouse=True)
@@ -25,9 +26,9 @@ def limpiar_llaves(postgres):
 
 
 def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
-    def cli(*args):
+    def cli(modulo, *args):
         return subprocess.run(
-            [sys.executable, "-m", "app.cli.api_keys", *args],
+            [sys.executable, "-m", f"scripts.{modulo}", *args],
             capture_output=True,
             text=True,
             check=False,
@@ -35,7 +36,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
         )
 
     def generar():
-        resultado = cli("generar", "--rol", "notificaciones")
+        resultado = cli("crear_api_key", "--rol", "notificaciones")
         assert resultado.returncode == 0, resultado.stderr
         lineas = resultado.stdout.splitlines()
         id = int(lineas[0].split(": ", 1)[1])
@@ -45,7 +46,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
 
     id, llave = generar()
     _, segunda = generar()
-    fallo = cli("generar", "--rol", "notificaciones")
+    fallo = cli("crear_api_key", "--rol", "notificaciones")
     assert fallo.returncode == 1
     assert "Ya existen dos llaves activas para este rol" in fallo.stderr
     assert fallo.stdout == ""
@@ -57,6 +58,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
         registro = session.get(ApiKey, id)
         assert registro is not None
         assert registro.hash == hash_llave
+        assert registro.prefijo == hash_llave[:8]
         assert registro.activa is True
         assert registro.creada_at.utcoffset().total_seconds() == 0
         assert session.get(Equipo, registro.equipo_id).nombre == "notificaciones"
@@ -65,11 +67,11 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
         assert llave not in str(valores)
         assert segunda not in str(valores)
 
-    baja = cli("desactivar", "--id", str(id))
+    baja = cli("desactivar_api_key", "--id", str(id))
     assert baja.returncode == 0
     assert llave not in baja.stdout + baja.stderr
-    assert cli("desactivar", "--id", str(id)).returncode == 0
-    assert cli("desactivar", "--id", "999999").returncode == 1
+    assert cli("desactivar_api_key", "--id", str(id)).returncode == 0
+    assert cli("desactivar_api_key", "--id", "999999").returncode == 1
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
         assert repo.obtener_rol_y_estado_por_hash(hash_llave) == ("notificaciones", False)
@@ -130,3 +132,31 @@ def test_migracion_reversible_y_modelos_coinciden(postgres):
             connection.execute(select(Equipo.id, Equipo.nombre, Equipo.es_admin)).all() == equipos
         )
         assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
+
+
+def test_migracion_reemplaza_prefijos_antiguos_sin_invalidar_llaves(postgres):
+    config = Config("alembic.ini")
+    hash_llave = hashlib.sha256(b"llave-de-prueba").hexdigest()
+    command.downgrade(config, "0002")
+    try:
+        with Session(postgres) as session, session.begin():
+            equipo_id = session.scalar(select(Equipo.id).where(Equipo.nombre == "inventario"))
+            registro = ApiKey(
+                equipo_id=equipo_id,
+                hash=hash_llave,
+                prefijo="llave-de",
+                activa=True,
+                creada_at=datetime.now(UTC),
+            )
+            session.add(registro)
+            session.flush()
+            id = registro.id
+    finally:
+        command.upgrade(config, "head")
+
+    with Session(postgres) as session:
+        registro = session.get(ApiKey, id)
+        assert registro is not None
+        assert registro.hash == hash_llave
+        assert registro.activa is True
+        assert registro.prefijo == hash_llave[:8]

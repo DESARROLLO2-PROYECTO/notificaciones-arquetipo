@@ -51,7 +51,6 @@ def test_genera_32_bytes_guarda_solo_hash_y_fecha_utc(rol):
 
     assert len(base64.urlsafe_b64decode(resultado.llave + "=")) == 32
     assert guardada.hash == hashlib.sha256(resultado.llave.encode()).hexdigest()
-    assert guardada.prefijo == resultado.llave[:8]
     assert guardada.equipo_id == ROLES.index(rol) + 1
     assert antes <= guardada.creada_at <= datetime.now(UTC)
     assert guardada.creada_at.utcoffset().total_seconds() == 0

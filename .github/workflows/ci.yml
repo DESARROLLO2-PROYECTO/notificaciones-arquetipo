@@ -25,7 +25,7 @@ jobs:
       - name: Cobertura (global >= 80 %, domain y schemas 100 %)
         # incluye integración (testcontainers usa el Docker del runner)
         run: |
-          uv run pytest --cov=app --cov-report=xml --cov-fail-under=80
+          uv run pytest --cov=app --cov=scripts --cov-report=xml --cov-fail-under=80
           uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
       - name: Análisis estático
         run: |

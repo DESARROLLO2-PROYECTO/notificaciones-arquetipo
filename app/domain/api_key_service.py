@@ -4,9 +4,9 @@ import hashlib
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
 
 from app.domain.errores import ErrorDominio, NoEncontrado
+from app.domain.puertos import ApiKeyRepository, NuevaApiKey
 
 ROLES = ("inventario", "fabricacion", "notificaciones")
 
@@ -25,33 +25,11 @@ def validar_rol(rol: str) -> None:
 
 
 @dataclass(frozen=True)
-class NuevaApiKey:
-    equipo_id: int
-    hash: str = field(repr=False)
-    prefijo: str
-    creada_at: datetime
-
-
-@dataclass(frozen=True)
 class ApiKeyGenerada:
     id: int
     rol: str
     creada_at: datetime
     llave: str = field(repr=False)
-
-
-class ApiKeyRepository(Protocol):
-    def bloquear_equipo(self, rol: str) -> int:
-        """Bloquea el equipo hasta terminar la transacción de generación."""
-        ...
-
-    def contar_activas(self, equipo_id: int) -> int: ...
-
-    def crear(self, llave: NuevaApiKey) -> int: ...
-
-    def desactivar(self, id: int) -> bool:
-        """Devuelve False si no existe; desactivar otra vez es idempotente."""
-        ...
 
 
 class ApiKeyService:
@@ -69,7 +47,6 @@ class ApiKeyService:
         registro = NuevaApiKey(
             equipo_id=equipo_id,
             hash=hashlib.sha256(llave.encode("utf-8")).hexdigest(),
-            prefijo=llave[:8],
             creada_at=creada_at,
         )
         id = self._repo.crear(registro)

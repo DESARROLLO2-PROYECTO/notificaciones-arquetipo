@@ -8,9 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.domain.autenticacion_service import AutenticacionService
 from app.domain.equipo_service import EquipoService
-from app.infrastructure.api_key_repository import ApiKeyRepo
 from app.infrastructure.db import transaccion
-from app.infrastructure.repositories import EquipoRepo
+from app.infrastructure.repositories import ApiKeyRepo, EquipoRepo
 
 
 def get_session() -> Iterator[Session]:

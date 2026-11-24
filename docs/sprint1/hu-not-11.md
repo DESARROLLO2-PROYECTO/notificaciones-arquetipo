@@ -17,16 +17,16 @@ necesario para conseguirlo. No son historias nuevas ni puntos adicionales al bac
 
 | Tarea | Trabajo | Evidencia |
 |---|---|---|
-| TS-11-01 | Persistir API Keys y preparar los tres roles | Modelo `ApiKey`, migración `0002` y `ApiKeyRepo` |
+| TS-11-01 | Persistir API Keys y preparar los tres roles | Modelo `ApiKey`, migración `0002`, puerto en `app/domain/puertos.py` y `ApiKeyRepo` en `app/infrastructure/repositories.py` |
 | TS-11-02 | Generar, limitar a dos activas y desactivar | `ApiKeyService`; bloqueo por equipo durante la generación |
-| TS-11-03 | Proporcionar el script de administración | `python -m app.cli.api_keys`; salida tras el commit |
+| TS-11-03 | Proporcionar los scripts de administración | `scripts/crear_api_key.py` y `scripts/desactivar_api_key.py` |
 | TS-11-04 | Comprobar criterios y documentar uso | Pruebas unitarias y de integración con PostgreSQL |
 
 ## Criterios de aceptación
 
 | Criterio del backlog | Comportamiento implementado |
 |---|---|
-| 1. Generación | `secrets.token_urlsafe(32)` usa 32 bytes aleatorios; persiste hash SHA-256, equipo/rol, fecha UTC, estado activo y prefijo de identificación del ER. Muestra ID y llave completa una vez, tras confirmar la transacción. |
+| 1. Generación | `secrets.token_urlsafe(32)` usa 32 bytes aleatorios. Persiste el hash SHA-256, equipo/rol, fecha UTC y estado activo. El prefijo del ER se toma del hash. Muestra ID y llave completa una vez, tras confirmar la transacción. |
 | 2. Rol inválido | Solo admite `inventario`, `fabricacion` y `notificaciones`. Devuelve `Rol no válido` sin conectarse a la BD. |
 | 3. Máximo dos activas | Bloquea la fila del equipo con `FOR UPDATE`, cuenta llaves activas y rechaza una tercera con `Ya existen dos llaves activas para este rol`. |
 | 4. Desactivación | Conserva el registro y marca `activa=false`; repetir la desactivación no falla. La búsqueda de llaves activas excluye las desactivadas. La aplicación de este estado en HTTP depende de HU-NOT-12. |
@@ -43,9 +43,9 @@ Con la API y PostgreSQL iniciados mediante `docker compose up --build -d`, el co
 aplica las migraciones al arrancar. Ejecutar desde la raíz del repositorio:
 
 ```bash
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol inventario
 ```
 
 Las primeras dos operaciones muestran sus respectivos identificadores y llaves; la tercera
@@ -55,9 +55,9 @@ La salida de generación contiene la credencial: no adjuntarla a evidencias, com
 Usar el ID devuelto por la primera operación para desactivarla (reemplazar `<id>`):
 
 ```bash
-docker compose exec api python -m app.cli.api_keys desactivar --id <id>
-docker compose exec api python -m app.cli.api_keys generar --rol inventario
-docker compose exec api python -m app.cli.api_keys generar --rol notificaciones
+docker compose exec api python -m scripts.desactivar_api_key --id <id>
+docker compose exec api python -m scripts.crear_api_key --rol inventario
+docker compose exec api python -m scripts.crear_api_key --rol notificaciones
 ```
 
 Desactivar libera un cupo del rol; la otra llave de Inventario permanece activa. La última
@@ -69,8 +69,8 @@ desde el equipo y ejecutar:
 ```bash
 uv sync --frozen
 uv run alembic upgrade head
-uv run python -m app.cli.api_keys generar --rol inventario
-uv run python -m app.cli.api_keys desactivar --id <id>
+uv run python -m scripts.crear_api_key --rol inventario
+uv run python -m scripts.desactivar_api_key --id <id>
 ```
 
 La dirección `db` del `.env.example` solo funciona dentro de la red de Docker Compose.
@@ -85,16 +85,21 @@ credenciales automáticamente. Al revertir `0002`, elimina las llaves pero conse
 ya que podrían existir antes o tener otros usos. Revertir elimina credenciales: usarlo
 únicamente como operación explícita de administración, no como parte de la demostración.
 
+`0003_prefijo_api_keys.py` reemplaza los prefijos guardados anteriormente por los primeros
+ocho caracteres del hash. Conserva el ID, el hash y el estado de cada llave, así que las
+credenciales existentes siguen siendo válidas. Revertir esta revisión conserva los prefijos
+derivados del hash.
+
 HU-NOT-12 debe calcular el hash del header recibido y usar
 `ApiKeyRepo.obtener_activa_por_hash()` para descartar llaves inválidas o desactivadas; luego
 debe obtener el rol del equipo y aplicar sus reglas de autorización. Nunca debe buscar solo
-por prefijo ni aceptar llaves inactivas. Las migraciones siguientes deben partir de `0002`.
+por prefijo ni aceptar llaves inactivas.
 
 ## Verificación
 
 ```bash
 uv run pytest tests/unit
-uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+uv run pytest --cov=app --cov=scripts --cov-report=term-missing --cov-fail-under=80
 uv run coverage report --include='app/domain/*,app/api/schemas.py' --fail-under=100
 uv run ruff check .
 uv run ruff format --check .
