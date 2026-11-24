@@ -1,39 +1,16 @@
 """Flujo de punta a punta con Postgres real (testcontainers). Sin Docker, se omite (en CI falla)."""
 
-import os
 from uuid import uuid4
 
 import pytest
-from testcontainers.community.postgres import PostgresContainer
-
-# Misma versión que docker-compose.yml.
-IMAGEN_PG = "postgres:16.15-alpine"
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _postgres():
-    try:
-        contenedor = PostgresContainer(IMAGEN_PG, driver="psycopg")
-        contenedor.start()
-    except Exception as e:  # Docker no disponible
-        # En CI (CI=true en GitHub Actions) un arranque fallido rompe el build, no se omite.
-        if os.environ.get("CI"):
-            pytest.fail(f"Postgres no arrancó en CI: {e}")
-        pytest.skip(f"Docker no disponible: {e}")
-    os.environ["DATABASE_URL"] = contenedor.get_connection_url()
-    yield
-    contenedor.stop()
 
 
 @pytest.fixture(scope="module")
-def client(_postgres):
-    from alembic import command
-    from alembic.config import Config
+def client(postgres):
     from fastapi.testclient import TestClient
 
     from app.main import create_app
 
-    command.upgrade(Config("alembic.ini"), "head")
     with TestClient(create_app()) as c:
         yield c
 

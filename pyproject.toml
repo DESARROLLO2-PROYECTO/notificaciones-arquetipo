@@ -35,7 +35,7 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.mypy]
-files = ["app"]
+files = ["app", "scripts"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
@@ -45,7 +45,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["app"]
+source = ["app", "scripts"]
 relative_files = true
 branch = true
 
