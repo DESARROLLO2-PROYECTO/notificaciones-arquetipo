@@ -30,8 +30,7 @@ def upgrade() -> None:
     sa.Column('activo', sa.Boolean(), nullable=False),
     sa.ForeignKeyConstraint(['equipo_destino_id'], ['equipos.id'], ),
     sa.ForeignKeyConstraint(['equipo_emisor_id'], ['equipos.id'], ),
-    sa.PrimaryKeyConstraint('codigo'),
-    sa.UniqueConstraint('campo_clave')
+    sa.PrimaryKeyConstraint('codigo')
     )
     op.create_table('notificaciones',
     sa.Column('id', sa.Uuid(), nullable=False),

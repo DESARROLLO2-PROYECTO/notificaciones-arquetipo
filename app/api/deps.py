@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.equipo_service import EquipoService
 from app.domain.notificacion_service import ServicioNotificaciones
-from app.infrastructure.db import transaccion
+from app.infrastructure.db import transaccion, get_engine
 from app.infrastructure.repositories import EquipoRepo
 from app.infrastructure.repositories import SqlAlchemyUnitOfWork
 
@@ -29,6 +29,11 @@ def get_equipos(session: SessionDep) -> EquipoService:
 ServicioDep = Annotated[EquipoService, Depends(get_equipos)]
 
 def get_servicio_notificaciones() -> ServicioNotificaciones:
-    return ServicioNotificaciones(lambda: SqlAlchemyUnitOfWork(get_session))
+    return ServicioNotificaciones(
+        lambda: SqlAlchemyUnitOfWork(lambda: Session(get_engine()))
+    )
 
+ServicioNotificacionesDep = Annotated[
+    ServicioNotificaciones, Depends(get_servicio_notificaciones)
+]
 

@@ -26,7 +26,7 @@ class TipoNotificacion(Base):
     equipo_emisor_id: Mapped[int | None] = mapped_column(ForeignKey("equipos.id"))
     equipo_destino_id: Mapped[int | None] = mapped_column(ForeignKey("equipos.id"))
     schema: Mapped[dict[str, Any] | list[str] | None] = mapped_column(JSON)
-    campo_clave: Mapped[str] = mapped_column(String(60), unique=True)
+    campo_clave: Mapped[str] = mapped_column(String(60))
     ttl_alerta_min: Mapped[int] = mapped_column(Integer)
     activo: Mapped[bool] = mapped_column(Boolean)
 

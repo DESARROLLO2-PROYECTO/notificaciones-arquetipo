@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Response, status
 from fastapi.responses import JSONResponse
 
+from app.api.deps import ServicioNotificacionesDep
 from app.api.schemas import (
     CrearNotificacionRequest,
     ErrorCampo,
@@ -27,7 +28,7 @@ def crear_notificacion(
     body: CrearNotificacionRequest,
     response: Response,
     equipo_emisor_id: int,
-    servicio: ServicioNotificaciones, 
+    servicio: ServicioNotificacionesDep, 
 ):
     resultado = servicio.registrar_notificacion(
         tipo_codigo=body.tipo,

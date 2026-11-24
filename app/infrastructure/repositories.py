@@ -5,6 +5,7 @@ from types import TracebackType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from sqlalchemy import select, or_
 from app.domain import puertos
@@ -182,7 +183,7 @@ class AlertaRepo:
             return None if r is None else _alerta_a_dominio(r)
 
 class SqlAlchemyUnitOfWork:
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
         self._session: Session | None = None
 
@@ -217,7 +218,6 @@ class SqlAlchemyUnitOfWork:
             self._session.commit()
         except IntegrityError as exc:
             self.rollback()
-            # Captura colisión del índice único parcial activo (tipo, clave)
             if "uq_alertas_activa" in str(exc.orig) or "unique" in str(exc.orig).lower():
                 raise ErrorConcurrenciaAlerta("Ya existe una alerta activa concurrente") from exc
             raise
