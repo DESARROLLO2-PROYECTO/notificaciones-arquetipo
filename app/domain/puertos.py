@@ -77,13 +77,14 @@ class Alerta:
 
 class AlertaRepository(Protocol):
     def crear(self, alerta: Alerta) -> Alerta: ...
-    def obtener_activa(self, tipo: str) -> Alerta | None: ...
+    def obtener_activa(self, tipo: str, clave: str) -> Alerta | None: ...
 
 
 """
 Permite garantizar unicidad de transacción
 """
 class UnitOfWork(Protocol):
+    equipos: EquipoRepository
     tipos: TipoNotificacionRepository
     notificaciones: NotificacionRepository
     alertas: AlertaRepository

@@ -2,75 +2,110 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+import logging
+from uuid import UUID
 from collections.abc import Callable
-from app.domain.errores import TipoNotificacionInvalido, ClaveAlertaFaltante
+from app.domain.errores import TipoNotificacionInvalido, ClaveAlertaFaltante, ErrorConcurrenciaAlerta
 
 from app.domain import puertos
 
+logger = logging.getLogger("notificaciones")
+
 @dataclass(frozen=True)
 class ResultadoRegistro:
-    notificacion: puertos.Notificacion | None
-    alerta: puertos.Alerta
-    es_alerta_nueva: bool
-    mensaje: str
+    notificacion_id: UUID
+    duplicada: bool
+    tipo: str
+    destino: str
+    clave: str
+    resultado_log: str
 
 
 class ServicioNotificaciones:
     def __init__(self, uow_factory: Callable[[], puertos.UnitOfWork]) -> None:
         self._uow_factory = uow_factory
 
-    def registrar(
+    def registrar_notificacion(
         self,
         tipo_codigo: str,
-        payload: dict[str, Any],
+        evento: str,
+        datos: dict[str, Any],
         equipo_emisor_id: int | None = None,
-    ) -> ResultadoRegistro | None:
+    ) -> ResultadoRegistro:
         ahora = datetime.now(timezone.utc)
+        clave = str(datos["productoId"])
 
+        try:
+            return self._intentar_registro(
+                ahora=ahora,
+                tipo_codigo=tipo_codigo,
+                clave=clave,
+                datos=datos,
+                equipo_emisor_id=equipo_emisor_id,
+            )
+        except ErrorConcurrenciaAlerta:
+            # Criterio 6: Dos requests llegaron al mismo tiempo sin alerta previa.
+            # El otro request ganó el INSERT; leemos su alerta activa y respondemos 200.
+            with self._uow_factory() as uow:
+                destino = self._resolver_destino(uow, tipo_codigo)
+                alerta = uow.alertas.obtener_activa(tipo=tipo_codigo, clave=clave)
+                if alerta is None:
+                    raise  # Falla inesperada -> 500
+                res = ResultadoRegistro(
+                    notificacion_id=alerta.notificacion_id,
+                    duplicada=True,
+                    tipo=tipo_codigo,
+                    destino=destino,
+                    clave=clave,
+                    resultado_log="ALERTA_YA_ACTIVA",
+                )
+                self._log_resultado(res)
+                return res
+
+    def _intentar_registro(
+        self,
+        ahora: datetime,
+        tipo_codigo: str,
+        clave: str,
+        datos: dict[str, Any],
+        equipo_emisor_id: int | None,
+    ) -> ResultadoRegistro:
         with self._uow_factory() as uow:
-            # 1. Validar tipo de notificación
             tipo_notif = uow.tipos.obtener_por_codigo(tipo_codigo)
+            # Si tipo de notificación no es válido
             if tipo_notif is None or not tipo_notif.activo:
-                raise TipoNotificacionInvalido(
-                    f"El tipo de notificación {tipo_codigo} no existe o está inactivo."
-                )
+                self._log_rechazo(tipo_codigo, "desconocido", clave)
+                raise TipoNotificacionInvalido(f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo.")
 
-            # 2. Extraer la clave de deduplicación/agrupación desde el payload
-            valor_clave = payload.get(tipo_notif.campo_clave)
-            if valor_clave is None or str(valor_clave).strip() == "":
-                raise ClaveAlertaFaltante(
-                    f"El payload debe incluir el campo '{tipo_notif.campo_clave}'."
-                )
-            clave = str(valor_clave)
-
-            # 3. Buscar alerta activa (con bloqueo en infraestructura para evitar race conditions)
+            destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
+            # 1. Buscar alerta activa bloqueando fila si ya existe (FOR UPDATE)
             alerta = uow.alertas.obtener_activa(
                 tipo=tipo_notif.codigo,
+                clave=clave
             )
 
-            es_alerta_nueva = False
-
-            # 4. Si ya existe y está viva: no registrar nada, devolver ID original
             if alerta is not None:
-                notificacion = uow.notificaciones.obtener(alerta.notificacion_id)
-                return ResultadoRegistro(
-                    notificacion=notificacion,
-                    alerta=alerta,
-                    es_alerta_nueva=False,
-                    mensaje=self._armar_mensaje(tipo_notif, clave, payload, es_alerta_nueva=False),
+                res = ResultadoRegistro(
+                    notificacion_id=alerta.notificacion_id,
+                    duplicada=True,
+                    tipo=tipo_notif.codigo,
+                    destino=destino,
+                    clave=clave,
+                    resultado_log="ALERTA_YA_ACTIVA",
                 )
+                self._log_resultado(res)
+                return res
 
-
-            # 5. Si no existe: crear notificación + alerta nueva en una sola transacción
-            mensaje = self._armar_mensaje(tipo_notif, clave, payload, es_alerta_nueva)
+            # 2. Calcular mensaje (máx 200 chars), pero NO guardarlo en payload
+            _mensaje_calculado = self._armar_mensaje(tipo_notif.codigo, datos)
 
             notificacion = uow.notificaciones.crear(
                 puertos.Notificacion(
-                    tipo=tipo_notif.campo_clave,
+                    tipo=tipo_notif.codigo,
                     creada_at=ahora,
                     equipo_emisor_id=equipo_emisor_id,
                     equipo_destino_id=tipo_notif.equipo_destino_id,
-                    payload={**payload, "mensaje": mensaje},
+                    payload=datos,  # Solo los datos recibidos, sin 'mensaje'
                 )
             )
 
@@ -79,29 +114,65 @@ class ServicioNotificaciones:
                 if tipo_notif.ttl_alerta_min > 0
                 else None
             )
-            alerta = uow.alertas.crear(
+            uow.alertas.crear(
                 puertos.Alerta(
-                    clave=clave,
                     tipo=tipo_notif.codigo,
+                    clave=clave,
                     notificacion_id=notificacion.id,
                     creada_at=ahora,
                     expira_at=expira_at,
                 )
             )
-            es_alerta_nueva = True
 
-            # 5. Una sola transacción para alerta + notificación
+            # Si hay colisión concurrente aquí, uow.commit() traduce IntegrityError -> ErrorConcurrenciaAlerta
             uow.commit()
 
+        res = ResultadoRegistro(
+            notificacion_id=notificacion.id,
+            duplicada=False,
+            tipo=tipo_notif.codigo,
+            destino=destino,
+            clave=clave,
+            resultado_log="REGISTRADA",
+        )
+        self._log_resultado(res)
+        return res
 
-    def _armar_mensaje(
-        self,
-        tipo_notif: puertos.TipoNotificacion,
-        clave: str,
-        payload: dict[str, Any],
-        es_alerta_nueva: bool,
+    def _armar_mensaje(self, tipo: str, datos: dict[str, Any]) -> str:
+        texto = (
+            f"[{tipo}] {datos['nombre']} ({datos['productoId']}): "
+            f"stock actual {datos['stockActual']}, mínimo {datos['stockMinimo']}"
+        )
+        return texto[:200]
+
+    def _log_resultado(self, res: ResultadoRegistro) -> None:
+        logger.info(
+            "resultado=%s tipo=%s destino=%s clave=%s notificacion_id=%s",
+            res.resultado_log,
+            res.tipo,
+            res.destino,
+            res.clave,
+            res.notificacion_id,
+        )
+
+    def _log_rechazo(self, tipo: str, destino: str, clave: str) -> None:
+        logger.info(
+            "resultado=RECHAZADA tipo=%s destino=%s clave=%s notificacion_id=None",
+            tipo,
+            destino,
+            clave,
+        )
+
+    def _resolver_destino(self, uow: puertos.UnitOfWork, tipo_codigo: str) -> str:
+        tipo_notif = uow.tipos.obtener_por_codigo(tipo_codigo)
+        if tipo_notif is None:
+            return "desconocido"
+        return self._resolver_destino_desde_tipo(uow, tipo_notif)
+
+    def _resolver_destino_desde_tipo(
+        self, uow: puertos.UnitOfWork, tipo_notif: puertos.TipoNotificacion
     ) -> str:
-        estado = "Nueva alerta" if es_alerta_nueva else "Alerta activa"
-        detalle = payload.get("detalle") or payload.get("descripcion") or ""
-        base = f"[{estado}] {tipo_notif.campo_clave}={clave}"
-        return f"{base}: {detalle}" if detalle else base
+        if tipo_notif.equipo_destino_id is None:
+            return "desconocido"
+        equipo = uow.equipos.obtener(tipo_notif.equipo_destino_id)
+        return equipo.nombre if equipo is not None else "desconocido"

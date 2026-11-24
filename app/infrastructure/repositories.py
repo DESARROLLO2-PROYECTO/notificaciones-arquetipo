@@ -3,6 +3,8 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from datetime import datetime, timezone
+from sqlalchemy import select, or_
 from app.domain import puertos
 from app.domain.errores import NombreDuplicado, ClaveDuplicada
 from app.infrastructure import models as m
@@ -66,6 +68,7 @@ class TipoNotificacionRepo:
         r = self._s.get(m.TipoNotificacion, codigo)
         return None if r is None else _tipo_notificacion_a_dominio(r)
 
+
 def _notificacion_a_dominio(r: m.Notificacion) -> puertos.Notificacion:
     return puertos.Notificacion(
         id=r.id,
@@ -113,6 +116,7 @@ class NotificacionRepo:
     def obtener(self, id: UUID) -> puertos.Notificacion | None:
         r = self._s.get(m.Notificacion, id)
         return None if r is None else _notificacion_a_dominio(r)
+    
 
 
 def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
@@ -155,3 +159,20 @@ class AlertaRepo:
     def obtener(self, id: int) -> puertos.Alerta | None:
         r = self._s.get(m.Alerta, id)
         return None if r is None else _alerta_a_dominio(r)
+
+    def obtener_activa(
+        self, tipo: str, clave: str
+        ) -> puertos.Alerta | None:
+            ahora = datetime.now(timezone.utc)
+            stmt = (
+                select(m.Alerta)
+                .where(
+                    m.Alerta.tipo == tipo,
+                    m.Alerta.clave == clave,
+                    m.Alerta.motivo_resolucion.is_(None),
+                    or_(m.Alerta.expira_at.is_(None), m.Alerta.expira_at > ahora),
+                )
+                .with_for_update()
+            )
+            r = self._s.execute(stmt).scalar_one_or_none()
+            return None if r is None else _alerta_a_dominio(r)
