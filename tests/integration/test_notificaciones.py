@@ -1,5 +1,5 @@
-from concurrent.futures import ThreadPoolExecutor
 import os
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
@@ -65,7 +65,8 @@ def _setup_db(_postgres):
             text(
                 """
                 INSERT INTO tipos_notificacion
-                    (codigo, campo_clave, ttl_alerta_min, activo, equipo_emisor_id, equipo_destino_id)
+                    (codigo, campo_clave, ttl_alerta_min, activo, 
+                    equipo_emisor_id, equipo_destino_id)
                 VALUES
                     ('STOCK_BAJO_INSUMO', 'productoId', 60, true, :inv, :inv),
                     ('STOCK_BAJO_PRODUCTO', 'productoId', 60, true, :inv, :fab),
@@ -107,6 +108,7 @@ def _cuerpo(**cambios) -> dict:
     }
     base.update(cambios)
     return base
+
 
 def _post(client, cuerpo: dict, emisor_id: int | None = None):
     eid = EMISOR_ID if emisor_id is None else emisor_id
@@ -268,6 +270,7 @@ def test_solicitudes_concurrentes_simultaneas_201_y_200(app):
 
 def test_falla_interna_500(app):
     from fastapi.testclient import TestClient
+
     from app.api.deps import get_servicio_notificaciones
 
     class ServicioRoto:

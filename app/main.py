@@ -19,7 +19,7 @@ _ESTADOS: dict[type[ErrorDominio], int] = {
 }
 
 
-# Atrapa errores 500 de error de tipado 
+# Atrapa errores 500 de error de tipado
 def _error_dominio(_: Request, e: Exception) -> JSONResponse:
     assert isinstance(e, ErrorDominio)
     status_code = _ESTADOS.get(type(e), 500)
@@ -32,7 +32,6 @@ def _error_dominio(_: Request, e: Exception) -> JSONResponse:
             status_code=422,
         )
     return JSONResponse({"mensaje": e.mensaje}, status_code=status_code)
-
 
 
 def _error_validacion(request: Request, e: Exception) -> JSONResponse:
@@ -51,7 +50,8 @@ def _error_validacion(request: Request, e: Exception) -> JSONResponse:
     if request.method == "POST" and ruta_path == "/notificaciones":
         cuerpo = e.body if isinstance(e.body, dict) else {}
         log.warning(
-            "resultado=RECHAZADA tipo=%s destino=desconocido clave=%s notificacion_id=None campos=%s",
+            "resultado=RECHAZADA tipo=%s destino=desconocido clave=%s "
+            "notificacion_id=None campos=%s",
             cuerpo.get("tipo", "DESCONOCIDO"),
             cuerpo.get("productoId", "None"),
             [c["campo"] for c in campos],

@@ -1,18 +1,17 @@
 """Repository/DAO: implementa los puertos de app/domain/puertos.py con SQLAlchemy."""
 
-from types import TracebackType
-
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
-
 from collections.abc import Callable
-from datetime import datetime, timezone
-from sqlalchemy import select, or_
-from app.domain import puertos
-from app.domain.errores import NombreDuplicado, ClaveDuplicada
-from app.infrastructure import models as m
+from datetime import UTC, datetime
+from types import TracebackType
 from uuid import UUID
-from app.domain.errores import ErrorConcurrenciaAlerta
+
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.domain import puertos
+from app.domain.errores import ClaveDuplicada, ErrorConcurrenciaAlerta, NombreDuplicado
+from app.infrastructure import models as m
 
 
 def _a_dominio(r: m.Equipo) -> puertos.Equipo:
@@ -48,6 +47,7 @@ def _tipo_notificacion_a_dominio(r: m.TipoNotificacion) -> puertos.TipoNotificac
         equipo_destino_id=r.equipo_destino_id,
         schema=r.schema,
     )
+
 
 class TipoNotificacionRepo:
     def __init__(self, session: Session) -> None:
@@ -122,7 +122,6 @@ class NotificacionRepo:
     def obtener(self, id: UUID) -> puertos.Notificacion | None:
         r = self._s.get(m.Notificacion, id)
         return None if r is None else _notificacion_a_dominio(r)
-    
 
 
 def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
@@ -134,9 +133,7 @@ def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
         creada_at=r.creada_at,
         expira_at=r.expira_at,
         motivo_resolucion=(
-            None
-            if r.motivo_resolucion is None
-            else puertos.ResolucionAlerta(r.motivo_resolucion)
+            None if r.motivo_resolucion is None else puertos.ResolucionAlerta(r.motivo_resolucion)
         ),
     )
 
@@ -153,9 +150,7 @@ class AlertaRepo:
             creada_at=alerta.creada_at,
             expira_at=alerta.expira_at,
             motivo_resolucion=(
-                None
-                if alerta.motivo_resolucion is None
-                else str(alerta.motivo_resolucion)
+                None if alerta.motivo_resolucion is None else str(alerta.motivo_resolucion)
             ),
         )
         self._s.add(registro)
@@ -166,22 +161,21 @@ class AlertaRepo:
         r = self._s.get(m.Alerta, id)
         return None if r is None else _alerta_a_dominio(r)
 
-    def obtener_activa(
-        self, tipo: str, clave: str
-        ) -> puertos.Alerta | None:
-            ahora = datetime.now(timezone.utc)
-            stmt = (
-                select(m.Alerta)
-                .where(
-                    m.Alerta.tipo == tipo,
-                    m.Alerta.clave == clave,
-                    m.Alerta.motivo_resolucion.is_(None),
-                    or_(m.Alerta.expira_at.is_(None), m.Alerta.expira_at > ahora),
-                )
-                .with_for_update()
+    def obtener_activa(self, tipo: str, clave: str) -> puertos.Alerta | None:
+        ahora = datetime.now(UTC)
+        stmt = (
+            select(m.Alerta)
+            .where(
+                m.Alerta.tipo == tipo,
+                m.Alerta.clave == clave,
+                m.Alerta.motivo_resolucion.is_(None),
+                or_(m.Alerta.expira_at.is_(None), m.Alerta.expira_at > ahora),
             )
-            r = self._s.execute(stmt).scalar_one_or_none()
-            return None if r is None else _alerta_a_dominio(r)
+            .with_for_update()
+        )
+        r = self._s.execute(stmt).scalar_one_or_none()
+        return None if r is None else _alerta_a_dominio(r)
+
 
 class SqlAlchemyUnitOfWork:
     def __init__(self, session_factory: Callable[[], Session]) -> None:

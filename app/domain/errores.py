@@ -14,16 +14,18 @@ class NoEncontrado(ErrorDominio):
 class NombreDuplicado(ErrorDominio):
     """409"""
 
+
 class ClaveDuplicada(ErrorDominio):
     """409"""
 
 
 class TipoNotificacionInvalido(ErrorDominio):
     """409"""
-    
+
 
 class ClaveAlertaFaltante(ErrorDominio):
     """400"""
+
 
 class ErrorConcurrenciaAlerta(Exception):
     """Lanzada por el repositorio/UoW cuando choca el índice único parcial en Postgres."""

@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas import (
-CrearNotificacionRequest,
+    CrearNotificacionRequest,
     EquipoIn,
     EquipoOut,
     EventoNotificacion,
@@ -41,6 +41,7 @@ def test_equipo_out_serializa_camel():
 
     # Act / Assert
     assert e.model_dump(by_alias=True) == {"id": 1, "nombre": "a", "esAdmin": False}
+
 
 def _payload_valido(**cambios) -> dict:
     base = {
@@ -155,6 +156,7 @@ def test_notificacion_request_rechaza_formatos_y_rangos_invalidos(cambios):
     # Act / Assert
     with pytest.raises(ValidationError):
         CrearNotificacionRequest.model_validate(cuerpo)
+
 
 @pytest.mark.parametrize("valor_bool", [True, False])
 def test_validar_producto_id_rechaza_bool_directo(valor_bool):

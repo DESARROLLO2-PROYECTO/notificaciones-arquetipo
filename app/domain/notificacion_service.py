@@ -1,15 +1,20 @@
 """Caso de uso de Equipo. Sin FastAPI ni SQLAlchemy."""
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+
 import logging
-from uuid import UUID
 from collections.abc import Callable
-from app.domain.errores import TipoNotificacionInvalido, ClaveAlertaFaltante, ErrorConcurrenciaAlerta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import UUID
 
 from app.domain import puertos
+from app.domain.errores import (
+    ErrorConcurrenciaAlerta,
+    TipoNotificacionInvalido,
+)
 
 logger = logging.getLogger("notificaciones")
+
 
 @dataclass(frozen=True)
 class ResultadoRegistro:
@@ -32,7 +37,7 @@ class ServicioNotificaciones:
         datos: dict[str, Any],
         equipo_emisor_id: int | None = None,
     ) -> ResultadoRegistro:
-        ahora = datetime.now(timezone.utc)
+        ahora = datetime.now(UTC)
         clave = str(datos["productoId"])
 
         try:
@@ -75,14 +80,13 @@ class ServicioNotificaciones:
             # Si tipo de notificación no es válido
             if tipo_notif is None or not tipo_notif.activo:
                 self._log_rechazo(tipo_codigo, "desconocido", clave)
-                raise TipoNotificacionInvalido(f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo.")
+                raise TipoNotificacionInvalido(
+                    f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo."
+                )
 
             destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
             # 1. Buscar alerta activa bloqueando fila si ya existe (FOR UPDATE)
-            alerta = uow.alertas.obtener_activa(
-                tipo=tipo_notif.codigo,
-                clave=clave
-            )
+            alerta = uow.alertas.obtener_activa(tipo=tipo_notif.codigo, clave=clave)
 
             if alerta is not None:
                 res = ResultadoRegistro(
@@ -124,7 +128,8 @@ class ServicioNotificaciones:
                 )
             )
 
-            # Si hay colisión concurrente aquí, uow.commit() traduce IntegrityError -> ErrorConcurrenciaAlerta
+            # Si hay colisión concurrente aquí, uow.commit()
+            # traduce IntegrityError -> ErrorConcurrenciaAlerta
             uow.commit()
 
         res = ResultadoRegistro(

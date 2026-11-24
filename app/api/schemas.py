@@ -1,11 +1,11 @@
 """Validator / DTO (Pydantic v2). JSON en camelCase."""
 
-from typing import Annotated
-
 import re
-from uuid import UUID
 from enum import StrEnum
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, Field, StrictInt, field_validator
+from typing import Annotated
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -58,7 +58,8 @@ class CrearNotificacionRequest(BaseModel):
         texto = str(v)
         if not _PATRON_PRODUCTO_ID.fullmatch(texto):
             raise ValueError(
-                "Debe tener entre 1 y 50 caracteres y contener solo letras, números y guion, sin espacios"
+                "Debe tener entre 1 y 50 caracteres y contener solo letras, "
+                "números y guion, sin espacios"
             )
         return texto
 
@@ -68,6 +69,7 @@ class CrearNotificacionRequest(BaseModel):
         if not v.strip():
             raise ValueError("El nombre no puede estar vacío o contener solo espacios")
         return v
+
 
 class NotificacionCreadaResponse(BaseModel):
     id: UUID

@@ -1,16 +1,12 @@
-from fastapi import APIRouter, Depends, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Response, status
 
 from app.api.deps import ServicioNotificacionesDep
 from app.api.schemas import (
     CrearNotificacionRequest,
-    ErrorCampo,
     ErrorValidacionResponse,
-    EventoNotificacion,
     NotificacionCreadaResponse,
     NotificacionDuplicadaResponse,
 )
-from app.domain.notificacion_service import ServicioNotificaciones, TipoNotificacionInvalido
 
 router = APIRouter(prefix="/notificaciones", tags=["notificaciones"])
 
@@ -28,8 +24,8 @@ def crear_notificacion(
     body: CrearNotificacionRequest,
     response: Response,
     equipo_emisor_id: int,
-    servicio: ServicioNotificacionesDep, 
-):
+    servicio: ServicioNotificacionesDep,
+) -> NotificacionCreadaResponse | NotificacionDuplicadaResponse:
     resultado = servicio.registrar_notificacion(
         tipo_codigo=body.tipo,
         evento=body.evento.value,

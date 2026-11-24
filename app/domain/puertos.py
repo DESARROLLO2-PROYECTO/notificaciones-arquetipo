@@ -1,11 +1,11 @@
 """Entidades y puertos del dominio. La infraestructura los implementa."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from uuid import UUID, uuid4
-from typing import Protocol, Any
-from types import TracebackType
+from datetime import UTC, datetime
 from enum import StrEnum
+from types import TracebackType
+from typing import Any, Protocol
+from uuid import UUID, uuid4
 
 
 @dataclass(frozen=True)
@@ -23,8 +23,8 @@ class EquipoRepository(Protocol):
 
 @dataclass(frozen=True)
 class TipoNotificacion:
-    """Define un tipo de notificación entre equipos.
-    """
+    """Define un tipo de notificación entre equipos."""
+
     campo_clave: str
     ttl_alerta_min: int
     activo: bool
@@ -33,15 +33,17 @@ class TipoNotificacion:
     equipo_destino_id: int | None = None
     schema: dict[str, Any] | list[str] | None = None
 
+
 class TipoNotificacionRepository(Protocol):
     def crear(self, tipo_notificacion: TipoNotificacion) -> TipoNotificacion: ...
     def obtener_por_codigo(self, codigo: str) -> TipoNotificacion | None: ...
+
 
 @dataclass(frozen=True)
 class Notificacion:
     tipo: str
     id: UUID = field(default_factory=uuid4)
-    creada_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    creada_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     intentos_publicacion: int = 0
     intentos_entrega: int = 0
     publicada_at: datetime | None = None
@@ -53,6 +55,7 @@ class Notificacion:
     equipo_destino_id: int | None = None
     payload: dict[str, Any] | list[str] | None = None
 
+
 class NotificacionRepository(Protocol):
     def crear(self, notificacion: Notificacion) -> Notificacion: ...
     def obtener(self, id: UUID) -> Notificacion | None: ...
@@ -61,19 +64,23 @@ class NotificacionRepository(Protocol):
 """
 Listado ENUM de motivos válidos para la resolución de la alerta
 """
+
+
 class ResolucionAlerta(StrEnum):
     EMISOR = "emisor"
     EXPIRACION = "expiracion"
+
 
 @dataclass(frozen=True)
 class Alerta:
     tipo: str
     clave: str
-    notificacion_id: UUID 
-    creada_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    notificacion_id: UUID
+    creada_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expira_at: datetime | None = None
     motivo_resolucion: ResolucionAlerta | None = None
-    id: int | None  = None
+    id: int | None = None
+
 
 class AlertaRepository(Protocol):
     def crear(self, alerta: Alerta) -> Alerta: ...
@@ -83,6 +90,8 @@ class AlertaRepository(Protocol):
 """
 Permite garantizar unicidad de transacción
 """
+
+
 class UnitOfWork(Protocol):
     equipos: EquipoRepository
     tipos: TipoNotificacionRepository
