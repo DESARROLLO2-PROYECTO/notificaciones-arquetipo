@@ -11,7 +11,7 @@ def client(postgres):
     from sqlalchemy.orm import Session
 
     from app.domain.api_key_service import ApiKeyService
-    from app.infrastructure.api_key_repository import ApiKeyRepo
+    from app.infrastructure.repositories import ApiKeyRepo
     from app.main import create_app
 
     with Session(postgres) as session, session.begin():
