@@ -1,7 +1,9 @@
 """Repository/DAO: implementa los puertos de app/domain/puertos.py con SQLAlchemy."""
 
+from types import TracebackType
+
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from datetime import datetime, timezone
 from sqlalchemy import select, or_
@@ -9,6 +11,7 @@ from app.domain import puertos
 from app.domain.errores import NombreDuplicado, ClaveDuplicada
 from app.infrastructure import models as m
 from uuid import UUID
+from app.domain.errores import ErrorConcurrenciaAlerta
 
 
 def _a_dominio(r: m.Equipo) -> puertos.Equipo:
@@ -48,15 +51,16 @@ class TipoNotificacionRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
 
-    def crear(self, tipo: puertos.TipoNotificacion) -> puertos.TipoNotificacion:
+    def crear(self, tipo_notificacion: puertos.TipoNotificacion) -> puertos.TipoNotificacion:
         registro = m.TipoNotificacion(
-        campo_clave=tipo.campo_clave,
-        ttl_alerta_min=tipo.ttl_alerta_min,
-        activo=tipo.activo,
-        equipo_emisor_id=tipo.equipo_emisor_id,
-        equipo_destino_id=tipo.equipo_destino_id,
-        schema=tipo.schema,
-    )
+            codigo=tipo_notificacion.codigo,
+            campo_clave=tipo_notificacion.campo_clave,
+            ttl_alerta_min=tipo_notificacion.ttl_alerta_min,
+            activo=tipo_notificacion.activo,
+            equipo_emisor_id=tipo_notificacion.equipo_emisor_id,
+            equipo_destino_id=tipo_notificacion.equipo_destino_id,
+            schema=tipo_notificacion.schema,
+        )
         try:
             self._s.add(registro)
             self._s.flush()
@@ -64,7 +68,7 @@ class TipoNotificacionRepo:
             raise ClaveDuplicada("Ya existe un tipo de notificación con ese campo clave") from e
         return _tipo_notificacion_a_dominio(registro)
 
-    def obtener(self, codigo: str) -> puertos.TipoNotificacion | None:
+    def obtener_por_codigo(self, codigo: str) -> puertos.TipoNotificacion | None:
         r = self._s.get(m.TipoNotificacion, codigo)
         return None if r is None else _tipo_notificacion_a_dominio(r)
 
@@ -176,3 +180,48 @@ class AlertaRepo:
             )
             r = self._s.execute(stmt).scalar_one_or_none()
             return None if r is None else _alerta_a_dominio(r)
+
+class SqlAlchemyUnitOfWork:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+        self._session: Session | None = None
+
+    def __enter__(self) -> "SqlAlchemyUnitOfWork":
+        session = self._session_factory()
+        self._session = session
+        self.equipos: puertos.EquipoRepository = EquipoRepo(session)
+        self.tipos: puertos.TipoNotificacionRepository = TipoNotificacionRepo(session)
+        self.notificaciones: puertos.NotificacionRepository = NotificacionRepo(session)
+        self.alertas: puertos.AlertaRepository = AlertaRepo(session)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if self._session is None:
+            return
+        try:
+            if exc_type is not None:
+                self.rollback()
+        finally:
+            self._session.close()
+            self._session = None
+
+    def commit(self) -> None:
+        if self._session is None:
+            raise RuntimeError("UnitOfWork no inicializado")
+        try:
+            self._session.commit()
+        except IntegrityError as exc:
+            self.rollback()
+            # Captura colisión del índice único parcial activo (tipo, clave)
+            if "uq_alertas_activa" in str(exc.orig) or "unique" in str(exc.orig).lower():
+                raise ErrorConcurrenciaAlerta("Ya existe una alerta activa concurrente") from exc
+            raise
+
+    def rollback(self) -> None:
+        if self._session is not None:
+            self._session.rollback()
