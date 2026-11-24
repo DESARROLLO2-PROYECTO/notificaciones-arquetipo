@@ -25,8 +25,5 @@ class TipoNotificacionInvalido(ErrorDominio):
 class ClaveAlertaFaltante(ErrorDominio):
     """400"""
 
-class ErrorDominio(Exception):
-    """400"""
-
 class ErrorConcurrenciaAlerta(Exception):
     """Lanzada por el repositorio/UoW cuando choca el índice único parcial en Postgres."""

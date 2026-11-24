@@ -29,6 +29,7 @@ class EquipoRepo:
             self._s.add(registro)
             self._s.flush()
         except IntegrityError as e:  # el único UNIQUE de la tabla es nombre
+            self._s.rollback()
             raise NombreDuplicado("Ya existe un equipo con ese nombre") from e
         return _a_dominio(registro)
 

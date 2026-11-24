@@ -83,12 +83,12 @@ def create_app() -> FastAPI:
     )
     app = FastAPI(title="Notificaciones", version="0.1.0")
     app.add_exception_handler(ErrorDominio, _error_dominio)
+    app.add_exception_handler(NoEncontrado, _error_dominio)
+    app.add_exception_handler(NombreDuplicado, _error_dominio)
+    app.add_exception_handler(TipoNotificacionInvalido, _error_dominio)
     app.add_exception_handler(RequestValidationError, _error_validacion)
     app.add_exception_handler(Exception, _error_inesperado)
     app.include_router(health.router)
     app.include_router(equipos.router)
     app.include_router(notificaciones.router)
     return app
-
-
-app = create_app()
