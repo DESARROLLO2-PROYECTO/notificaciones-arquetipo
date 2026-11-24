@@ -17,3 +17,8 @@ class NombreDuplicado(ErrorDominio):
 
 class NoAutenticado(ErrorDominio):
     """401"""
+
+    def __init__(self, motivo: str, rol: str | None = None) -> None:
+        super().__init__("Acceso denegado")
+        self.motivo = motivo
+        self.rol = rol

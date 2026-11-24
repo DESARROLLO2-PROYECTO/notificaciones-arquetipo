@@ -53,7 +53,7 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
     hash_llave = hashlib.sha256(llave.encode()).hexdigest()
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
-        assert repo.obtener_activa_por_hash(hash_llave) == "notificaciones"
+        assert repo.obtener_rol_y_estado_por_hash(hash_llave) == ("notificaciones", True)
         registro = session.get(ApiKey, id)
         assert registro is not None
         assert registro.hash == hash_llave
@@ -72,10 +72,10 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
     assert cli("desactivar", "--id", "999999").returncode == 1
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
-        assert repo.obtener_activa_por_hash(hash_llave) is None
-        assert repo.obtener_activa_por_hash("0" * 64) is None
+        assert repo.obtener_rol_y_estado_por_hash(hash_llave) == ("notificaciones", False)
+        assert repo.obtener_rol_y_estado_por_hash("0" * 64) is None
         hash_segunda = hashlib.sha256(segunda.encode()).hexdigest()
-        assert repo.obtener_activa_por_hash(hash_segunda) == "notificaciones"
+        assert repo.obtener_rol_y_estado_por_hash(hash_segunda) == ("notificaciones", True)
         assert session.get(ApiKey, id).activa is False
     generar()
 

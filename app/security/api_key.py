@@ -18,15 +18,14 @@ def exigir_api_key(
     servicio: AutenticacionDep,
     llave: Annotated[str | None, Security(_header)],
 ) -> str:
-    rol = servicio.autenticar(llave) if llave and llave.strip() else None
-    if rol is not None:
-        return rol
-
-    motivo = "llave inválida o desactivada" if llave and llave.strip() else "sin llave"
-    log.warning(
-        "RECHAZADA 401 endpoint=%s %s motivo=%s",
-        request.method,
-        request.scope["route"].path,
-        motivo,
-    )
-    raise NoAutenticado("Acceso denegado")
+    try:
+        return servicio.autenticar(llave)
+    except NoAutenticado as error:
+        log.warning(
+            "RECHAZADA 401 endpoint=%s %s motivo=%s rol=%s",
+            request.method,
+            request.scope["route"].path,
+            error.motivo,
+            error.rol or "desconocido",
+        )
+        raise

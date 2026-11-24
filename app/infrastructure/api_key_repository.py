@@ -46,11 +46,15 @@ class ApiKeyRepo:
         )
         return actualizado is not None
 
-    def obtener_activa_por_hash(self, hash_llave: str) -> str | None:
-        """Devuelve el nombre del equipo asociado al hash de una llave activa."""
-        return self._s.scalar(
-            select(Equipo.nombre)
+    def obtener_rol_y_estado_por_hash(self, hash_llave: str) -> tuple[str, bool] | None:
+        """Devuelve el rol y el estado de la llave identificada por el hash."""
+        registro = self._s.execute(
+            select(Equipo.nombre, ApiKey.activa)
             .select_from(ApiKey)
             .join(Equipo, ApiKey.equipo_id == Equipo.id)
-            .where(ApiKey.hash == hash_llave, ApiKey.activa.is_(True))
-        )
+            .where(ApiKey.hash == hash_llave)
+        ).one_or_none()
+        if registro is None:
+            return None
+        rol, activa = registro
+        return rol, activa
