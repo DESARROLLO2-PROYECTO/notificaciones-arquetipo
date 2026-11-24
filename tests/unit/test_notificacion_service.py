@@ -1,5 +1,6 @@
 import logging
 from dataclasses import replace
+from unittest.mock import MagicMock
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from types import TracebackType
@@ -353,3 +354,87 @@ def test_falla_interna_en_commit_hace_rollback_y_no_deja_datos_parciales(uow: Fa
     assert uow.rollbacks == 1
     assert len(uow.notificaciones_guardadas) == 0
     assert len(uow.alertas_guardadas) == 0
+
+def _datos_base() -> dict:
+    return {
+        "tipo": "STOCK_BAJO_INSUMO",
+        "evento": "DETECTADA",
+        "productoId": "INS-100",
+        "nombre": "Acero",
+        "stockActual": 2,
+        "stockMinimo": 10,
+    }
+
+
+def _tipo_notif(equipo_destino_id: int | None = 2) -> puertos.TipoNotificacion:
+    return puertos.TipoNotificacion(
+        codigo="STOCK_BAJO_INSUMO",
+        campo_clave="productoId",
+        ttl_alerta_min=60,
+        activo=True,
+        equipo_emisor_id=1,
+        equipo_destino_id=equipo_destino_id,
+    )
+
+
+def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
+    """Cubre línea 53 (alerta is None tras ErrorConcurrenciaAlerta) y línea 169 (tipo_notif is None en _resolver_destino)."""
+    uow_1 = MagicMock()
+    uow_1.__enter__.return_value = uow_1
+    uow_1.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=2)
+    uow_1.equipos.obtener.return_value = puertos.Equipo(id=2, nombre="compras", es_admin=False)
+    uow_1.alertas.obtener_activa.return_value = None
+    uow_1.notificaciones.crear.return_value = puertos.Notificacion(
+        id=10,
+        tipo="STOCK_BAJO_INSUMO",
+        creada_at=None,
+        equipo_emisor_id=1,
+        equipo_destino_id=2,
+        payload=_datos_base(),
+    )
+    uow_1.commit.side_effect = ErrorConcurrenciaAlerta("colision")
+
+    uow_2 = MagicMock()
+    uow_2.__enter__.return_value = uow_2
+    # En el segundo UoW, obtener_por_codigo devuelve None -> cubre línea 169 (_resolver_destino -> 'desconocido')
+    uow_2.tipos.obtener_por_codigo.return_value = None
+    # obtener_activa sigue devolviendo None -> cubre línea 53 (raise)
+    uow_2.alertas.obtener_activa.return_value = None
+
+    uows = iter([uow_1, uow_2])
+    servicio = ServicioNotificaciones(lambda: next(uows))
+
+    with pytest.raises(ErrorConcurrenciaAlerta):
+        servicio.registrar_notificacion(
+            tipo_codigo="STOCK_BAJO_INSUMO",
+            evento="DETECTADA",
+            datos=_datos_base(),
+            equipo_emisor_id=1,
+        )
+
+
+def test_resolver_destino_sin_equipo_destino_o_equipo_inexistente():
+    """Cubre línea 176 (equipo_destino_id is None -> 'desconocido') y rama equipo is None."""
+    uow = MagicMock()
+    uow.__enter__.return_value = uow
+    uow.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=None)
+    uow.alertas.obtener_activa.return_value = None
+    uow.notificaciones.crear.return_value = puertos.Notificacion(
+        id=11,
+        tipo="STOCK_BAJO_INSUMO",
+        creada_at=None,
+        equipo_emisor_id=1,
+        equipo_destino_id=None,
+        payload=_datos_base(),
+    )
+
+    servicio = ServicioNotificaciones(lambda: uow)
+    res = servicio.registrar_notificacion(
+        tipo_codigo="STOCK_BAJO_INSUMO",
+        evento="DETECTADA",
+        datos=_datos_base(),
+        equipo_emisor_id=1,
+    )
+
+    assert res.destino == "desconocido"
+    uow.equipos.obtener.assert_not_called()

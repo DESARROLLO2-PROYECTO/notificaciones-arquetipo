@@ -42,7 +42,6 @@ _PATRON_PRODUCTO_ID = re.compile(r"^[A-Za-z0-9-]{1,50}$")
 
 class CrearNotificacionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")  # Rechaza campos desconocidos si aplica
-
     tipo: TipoStockBajo
     evento: EventoNotificacion = EventoNotificacion.DETECTADA
     productoId: StrictInt | str

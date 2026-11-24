@@ -155,3 +155,8 @@ def test_notificacion_request_rechaza_formatos_y_rangos_invalidos(cambios):
     # Act / Assert
     with pytest.raises(ValidationError):
         CrearNotificacionRequest.model_validate(cuerpo)
+
+@pytest.mark.parametrize("valor_bool", [True, False])
+def test_validar_producto_id_rechaza_bool_directo(valor_bool):
+    with pytest.raises(ValueError, match="productoId debe ser entero o texto alfanumérico"):
+        CrearNotificacionRequest.validar_producto_id(valor_bool)
