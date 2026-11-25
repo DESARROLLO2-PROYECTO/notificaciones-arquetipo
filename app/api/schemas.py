@@ -88,6 +88,7 @@ class MensajeResponse(BaseModel):
 
 class CicloResponse(_Base):
     alertas_cerradas: int
+    publicadas: int
     errores: list[str]
 
 

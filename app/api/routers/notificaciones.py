@@ -100,7 +100,9 @@ def crear_notificacion(
     "/ciclo",
     summary="Ejecutar el ciclo de notificaciones",
     description=(
-        "Corre las tareas periódicas; hoy cierra con motivo EXPIRACION las alertas vencidas. "
+        "Corre las tareas periódicas: cierra con motivo EXPIRACION las alertas vencidas y "
+        "publica en el broker las notificaciones pendientes (menos de 3 intentos, de más de "
+        "1 minuto) por orden de creación. "
         "Solo la API Key del rol `notificaciones`; pensado para invocarse de forma externa "
         "y periódica. Ciclos simultáneos nunca procesan la misma alerta dos veces."
     ),
@@ -117,4 +119,8 @@ def ejecutar_ciclo(
         _log_403(request, "endpoint de administración", identidad.rol)
         raise NoAutorizado("endpoint de administración")
     resumen, errores = servicio.ejecutar_ciclo()
-    return CicloResponse(alertas_cerradas=resumen.get("alertas", 0), errores=errores)
+    return CicloResponse(
+        alertas_cerradas=resumen.get("alertas", 0),
+        publicadas=resumen.get("publicaciones", 0),
+        errores=errores,
+    )
