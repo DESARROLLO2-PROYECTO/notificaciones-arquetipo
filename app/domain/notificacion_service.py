@@ -47,13 +47,11 @@ class ServicioNotificaciones:
         equipo_emisor_id: int | None = None,
     ) -> ResultadoRegistro:
         ahora = datetime.now(UTC)
-        clave = str(datos["productoId"])
 
         argumentos: dict[str, Any] = {
             "ahora": ahora,
             "evento": evento,
             "tipo_codigo": tipo_codigo,
-            "clave": clave,
             "datos": datos,
             "equipo_emisor_id": equipo_emisor_id,
         }
@@ -63,7 +61,13 @@ class ServicioNotificaciones:
             # Criterio 6: Dos requests llegaron al mismo tiempo sin alerta previa.
             # El otro request ganó el INSERT; leemos su alerta activa y respondemos 200.
             with self._uow_factory() as uow:
-                destino = self._resolver_destino(uow, tipo_codigo)
+                tipo_notif = uow.tipos.obtener_por_codigo(tipo_codigo)
+                if tipo_notif is None or not tipo_notif.activo:
+                    raise TipoNotificacionInvalido(
+                        f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo."
+                    ) from None
+                destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
+                clave = str(datos[tipo_notif.campo_clave])
                 alerta = uow.alertas.obtener_activa(tipo_codigo, clave, ahora)
                 if alerta is None:
                     # El ganador ya se resolvió (REPUESTO concurrente): un único reintento.
@@ -85,7 +89,6 @@ class ServicioNotificaciones:
         ahora: datetime,
         evento: str,
         tipo_codigo: str,
-        clave: str,
         datos: dict[str, Any],
         equipo_emisor_id: int | None,
     ) -> ResultadoRegistro:
@@ -93,12 +96,14 @@ class ServicioNotificaciones:
             tipo_notif = uow.tipos.obtener_por_codigo(tipo_codigo)
             # Si tipo de notificación no es válido
             if tipo_notif is None or not tipo_notif.activo:
-                self._log_rechazo(tipo_codigo, "desconocido", clave)
+                clave_rechazo = datos.get("productoId") or datos.get("codigoCondicion")
+                self._log_rechazo(tipo_codigo, "desconocido", str(clave_rechazo))
                 raise TipoNotificacionInvalido(
                     f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo."
                 )
 
             destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
+            clave = str(datos[tipo_notif.campo_clave])
             if tipo_notif.equipo_emisor_id is not None and (
                 tipo_notif.equipo_emisor_id != equipo_emisor_id
             ):
@@ -288,10 +293,13 @@ class ServicioNotificaciones:
         )
 
     def _armar_mensaje(self, tipo: str, datos: dict[str, Any]) -> str:
-        texto = (
-            f"[{tipo}] {datos['nombre']} ({datos['productoId']}): "
-            f"stock actual {datos['stockActual']}, mínimo {datos['stockMinimo']}"
-        )
+        if tipo == "CONDICION_URGENTE":
+            texto = f"[{tipo}] {datos['codigoCondicion']}: {datos['descripcion']}"
+        else:
+            texto = (
+                f"[{tipo}] {datos['nombre']} ({datos['productoId']}): "
+                f"stock actual {datos['stockActual']}, mínimo {datos['stockMinimo']}"
+            )
         return texto[:200]
 
     def _log_resultado(self, res: ResultadoRegistro) -> None:
@@ -311,12 +319,6 @@ class ServicioNotificaciones:
             destino,
             clave,
         )
-
-    def _resolver_destino(self, uow: puertos.UnitOfWork, tipo_codigo: str) -> str:
-        tipo_notif = uow.tipos.obtener_por_codigo(tipo_codigo)
-        if tipo_notif is None:
-            return "desconocido"
-        return self._resolver_destino_desde_tipo(uow, tipo_notif)
 
     def _resolver_destino_desde_tipo(
         self, uow: puertos.UnitOfWork, tipo_notif: puertos.TipoNotificacion

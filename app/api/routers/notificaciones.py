@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from app.api.deps import ServicioNotificacionesDep
 from app.api.schemas import (
     CicloResponse,
-    CrearNotificacionRequest,
+    CrearNotificacionBody,
     ErrorValidacionResponse,
     MensajeResponse,
     NotificacionCreadaResponse,
@@ -38,12 +38,14 @@ def _log_403(request: Request, motivo: str, rol: str | None) -> None:
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
-    summary="Registrar o resolver una notificación de stock bajo",
+    summary="Registrar o resolver una notificación de stock bajo o condición urgente",
     description=(
-        "DETECTADA registra la notificación y activa la alerta del artículo; si ya hay una "
-        "alerta activa responde 200 con el id original. REPUESTO o RESUELTA, con los mismos "
-        "datos de la activación, resuelve la alerta activa (motivo EMISOR) y responde 200 "
-        "aunque no hubiera alerta activa."
+        "DETECTADA registra la notificación y activa la alerta del artículo (stock bajo, "
+        "`productoId`) o de la condición (`CONDICION_URGENTE`, `codigoCondicion` y "
+        "`descripcion`, solo API Key de fabricación); si ya hay una alerta activa responde 200 "
+        "con el id original. REPUESTO o RESUELTA, con los mismos datos de la activación, "
+        "resuelve la alerta activa (motivo EMISOR) y responde 200 aunque no hubiera alerta "
+        "activa."
     ),
     responses={
         200: {
@@ -57,7 +59,7 @@ def _log_403(request: Request, motivo: str, rol: str | None) -> None:
 )
 def crear_notificacion(
     request: Request,
-    body: CrearNotificacionRequest,
+    body: CrearNotificacionBody,
     response: Response,
     identidad: Annotated[Identidad, Depends(exigir_api_key)],
     servicio: ServicioNotificacionesDep,
@@ -86,7 +88,11 @@ def crear_notificacion(
         return NotificacionDuplicadaResponse(
             id=resultado.notificacion_id,
             duplicada=True,
-            mensaje="Ya existe una alerta activa para este artículo",
+            mensaje=(
+                "Ya existe una alerta activa para esta condición"
+                if body.tipo == "CONDICION_URGENTE"
+                else "Ya existe una alerta activa para este artículo"
+            ),
         )
 
     response.status_code = status.HTTP_201_CREATED
