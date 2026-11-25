@@ -75,7 +75,7 @@ class PublicadorAmqp:
 
     def publicar(self, mensaje: MensajeNotificacion) -> None:
         if mensaje.destino not in self._destinos:
-            raise ValueError(f"Destino sin cola: {mensaje.destino}")
+            raise ColaNoDisponible(f"Destino sin cola: {mensaje.destino}")
         futuro = asyncio.run_coroutine_threadsafe(self._publicar(mensaje), self._obtener_bucle())
         try:
             futuro.result(timeout=2 * self._timeout_s)

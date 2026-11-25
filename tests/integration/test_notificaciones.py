@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -493,12 +494,12 @@ def test_ciclo_cierra_las_vencidas_y_registra_el_resumen(client, caplog):
     r = _ciclo(client)
 
     assert r.status_code == 200
-    assert r.json() == {"alertasCerradas": 3, "errores": []}
+    assert r.json() == {"alertasCerradas": 3, "publicadas": 0, "errores": []}
     assert "Limpieza de alertas completada: 3 alertas expiradas" in caplog.text
     assert _sql(
         "SELECT motivo_resolucion FROM alertas WHERE clave = :c", c=vigente["productoId"]
     ) == [(None,)]
-    assert _ciclo(client).json() == {"alertasCerradas": 0, "errores": []}
+    assert _ciclo(client).json() == {"alertasCerradas": 0, "publicadas": 0, "errores": []}
 
 
 def test_ciclo_con_tarea_fallida_responde_200_con_errores(app):
@@ -515,7 +516,8 @@ def test_ciclo_con_tarea_fallida_responde_200_con_errores(app):
             return (("alertas", rota),)
 
     app.dependency_overrides[get_servicio_notificaciones] = lambda: ServicioConTareaRota(
-        lambda: None  # type: ignore[arg-type,return-value]
+        lambda: None,  # type: ignore[arg-type,return-value]
+        None,  # type: ignore[arg-type]
     )
     try:
         with TestClient(app) as c:
@@ -524,7 +526,7 @@ def test_ciclo_con_tarea_fallida_responde_200_con_errores(app):
         app.dependency_overrides.clear()
 
     assert r.status_code == 200
-    assert r.json() == {"alertasCerradas": 0, "errores": ["alertas"]}
+    assert r.json() == {"alertasCerradas": 0, "publicadas": 0, "errores": ["alertas"]}
 
 
 def test_ciclo_con_llave_de_otro_rol_403(client):
@@ -571,3 +573,233 @@ def test_migracion_0005_agrega_y_quita_resuelta_at(_setup_db):
         command.upgrade(config, "head")
     assert "resuelta_at" in {c["name"] for c in inspect(engine).get_columns("alertas")}
     engine.dispose()
+
+
+# --- HU-NOT-03: publicar en el broker ---
+
+
+@pytest.fixture
+def broker(rabbitmq, monkeypatch):
+    from app.infrastructure.broker import PublicadorAmqp
+
+    publicador = PublicadorAmqp(rabbitmq, timeout_s=10)
+    monkeypatch.setattr("app.api.deps.obtener_publicador", lambda: publicador)
+    # Aparta las pendientes de otras pruebas para que no entren en el ciclo
+    _sql("UPDATE notificaciones SET intentos_publicacion = 3 WHERE publicada_at IS NULL")
+    yield rabbitmq
+    publicador.cerrar()
+
+
+def _leer_cola(url: str, destino: str) -> list[dict]:
+    import asyncio
+    import json
+
+    from tests.integration.test_broker import _leer
+
+    return [json.loads(m.body) for m in asyncio.run(_leer(url, destino))]
+
+
+def _fila(id: str):
+    return _sql(
+        "SELECT publicada_at, proximo_intento_entrega, intentos_publicacion, "
+        "ultimo_error_publicacion FROM notificaciones WHERE id = :id",
+        id=id,
+    )[0]
+
+
+def test_detectada_publica_en_la_cola_del_destino(client, broker):
+    _leer_cola(broker, "inventario")  # vacía restos de otras pruebas
+
+    r = _post(client, _cuerpo())
+
+    assert r.status_code == 201
+    id = r.json()["id"]
+    assert _leer_cola(broker, "inventario") == [{"id": id, "tipo": "STOCK_BAJO_INSUMO"}]
+    publicada_at, proximo, intentos, error = _fila(id)
+    assert proximo - publicada_at == timedelta(minutes=5)
+    assert (intentos, error) == (0, None)
+
+
+def test_broker_no_disponible_responde_201_y_queda_pendiente(client, monkeypatch):
+    from app.infrastructure.broker import PublicadorAmqp
+
+    caido = PublicadorAmqp("amqp://x:x@127.0.0.1:1/", timeout_s=1)
+    monkeypatch.setattr("app.api.deps.obtener_publicador", lambda: caido)
+
+    r = _post(client, _cuerpo())
+    caido.cerrar()
+
+    assert r.status_code == 201
+    publicada_at, proximo, intentos, error = _fila(r.json()["id"])
+    assert (publicada_at, proximo, intentos) == (None, None, 1)
+    assert error == "No fue posible publicar en la cola (AMQPConnectionError)"
+
+
+def test_ciclo_publica_las_pendientes_de_mas_de_un_minuto(client, broker):
+    _leer_cola(broker, "inventario")
+    ids = []
+    for _ in range(2):
+        ids.append(_post(client, _cuerpo()).json()["id"])
+    # Una pendiente vieja, otra reciente y otra ya publicada que no debe repetirse
+    _sql("UPDATE notificaciones SET publicada_at = NULL WHERE id = :id", id=ids[0])
+    _sql(
+        "UPDATE notificaciones SET creada_at = now() - interval '2 minutes' WHERE id = :id",
+        id=ids[0],
+    )
+    _sql("UPDATE notificaciones SET publicada_at = NULL WHERE id = :id", id=ids[1])
+    _leer_cola(broker, "inventario")  # solo importa lo que publique el ciclo
+
+    r = _ciclo(client)
+
+    assert r.json() == {"alertasCerradas": 0, "publicadas": 1, "errores": []}
+    assert [m["id"] for m in _leer_cola(broker, "inventario")] == [ids[0]]
+    assert _fila(ids[0])[0] is not None
+    assert _fila(ids[1])[0] is None
+    assert _ciclo(client).json()["publicadas"] == 0
+
+
+def test_ciclos_simultaneos_publican_cada_notificacion_una_vez(app, client, broker):
+    from fastapi.testclient import TestClient
+
+    ids = [_post(client, _cuerpo()).json()["id"] for _ in range(6)]
+    for id in ids:
+        _sql(
+            "UPDATE notificaciones SET publicada_at = NULL, "
+            "creada_at = now() - interval '2 minutes' WHERE id = :id",
+            id=id,
+        )
+    _leer_cola(broker, "inventario")
+
+    def correr():
+        with TestClient(app) as c:
+            return _ciclo(c).json()["publicadas"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        publicadas = [f.result() for f in [pool.submit(correr), pool.submit(correr)]]
+
+    assert sum(publicadas) == 6
+    assert sorted(m["id"] for m in _leer_cola(broker, "inventario")) == sorted(ids)
+
+
+# --- HU-NOT-05: condición urgente ---
+
+MENSAJE_CU_INVALIDA = "Información de la condición urgente incompleta o inválida"
+
+
+def _cu(**cambios) -> dict:
+    base = {
+        "tipo": "CONDICION_URGENTE",
+        "codigoCondicion": f"CU-{uuid4().hex[:10]}",
+        "descripcion": "Horno por encima de la temperatura máxima",
+    }
+    base.update(cambios)
+    return base
+
+
+def test_condicion_urgente_201_se_publica_en_la_cola_de_fabricacion(client, broker):
+    _leer_cola(broker, "fabricacion")  # vacía restos de otras pruebas
+    cuerpo = _cu()
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 201
+    id = r.json()["id"]
+    assert r.json()["mensaje"] == "Notificación registrada correctamente"
+    assert _leer_cola(broker, "fabricacion") == [{"id": id, "tipo": "CONDICION_URGENTE"}]
+    (fila,) = _sql(
+        "SELECT payload, creada_at FROM notificaciones WHERE id = :id",
+        id=id,
+    )
+    assert fila[0]["codigoCondicion"] == cuerpo["codigoCondicion"]
+    assert fila[0]["descripcion"] == cuerpo["descripcion"]
+    assert "mensaje" not in fila[0]
+
+
+def test_condicion_urgente_duplicada_200_con_id_original(client):
+    cuerpo = _cu()
+    creada = _post(client, cuerpo, rol="fabricacion").json()
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "id": creada["id"],
+        "duplicada": True,
+        "mensaje": "Ya existe una alerta activa para esta condición",
+    }
+
+
+def test_condicion_urgente_resuelta_y_nueva_detectada_201(client):
+    cuerpo = _cu()
+    primera = _post(client, cuerpo, rol="fabricacion").json()
+
+    resuelta = _post(client, {**cuerpo, "evento": "RESUELTA"}, rol="fabricacion")
+    nueva = _post(client, cuerpo, rol="fabricacion")
+
+    assert resuelta.status_code == 200
+    assert resuelta.json() == {"mensaje": "Alerta resuelta correctamente"}
+    assert nueva.status_code == 201
+    assert nueva.json()["id"] != primera["id"]
+
+
+@pytest.mark.parametrize(
+    ("cambios", "campo"),
+    [
+        ({"codigoCondicion": ""}, "codigoCondicion"),
+        ({"codigoCondicion": "A" * 31}, "codigoCondicion"),
+        ({"codigoCondicion": "TEMP 01"}, "codigoCondicion"),
+        ({"descripcion": ""}, "descripcion"),
+        ({"descripcion": "   "}, "descripcion"),
+        ({"descripcion": "x" * 101}, "descripcion"),
+    ],
+)
+def test_condicion_urgente_invalida_422(client, cambios, campo):
+    r = _post(client, _cu(**cambios), rol="fabricacion")
+
+    assert r.status_code == 422
+    assert r.json()["mensaje"] == MENSAJE_CU_INVALIDA
+    assert [e["campo"] for e in r.json()["errores"]] == [campo]
+
+
+@pytest.mark.parametrize("faltante", ["codigoCondicion", "descripcion"])
+def test_condicion_urgente_incompleta_422(client, faltante):
+    cuerpo = _cu()
+    del cuerpo[faltante]
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 422
+    assert r.json()["mensaje"] == MENSAJE_CU_INVALIDA
+    assert [e["campo"] for e in r.json()["errores"]] == [faltante]
+
+
+def test_condicion_urgente_con_llave_de_inventario_403(client):
+    r = _post(client, _cu(), rol="inventario")
+
+    assert r.status_code == 403
+
+
+def test_migracion_0006_siembra_condicion_urgente(_setup_db):
+    from alembic import command
+    from alembic.config import Config
+
+    consulta = (
+        "SELECT t.campo_clave, t.ttl_alerta_min, e.nombre, d.nombre, t.activo "
+        "FROM tipos_notificacion t "
+        "JOIN equipos e ON e.id = t.equipo_emisor_id "
+        "JOIN equipos d ON d.id = t.equipo_destino_id "
+        "WHERE t.codigo = 'CONDICION_URGENTE'"
+    )
+    assert [tuple(f) for f in _sql(consulta)] == [
+        ("codigoCondicion", 60, "fabricacion", "fabricacion", True)
+    ]
+    config = Config("alembic.ini")
+    # El downgrade no puede borrar un tipo con notificaciones registradas
+    _sql("DELETE FROM alertas WHERE tipo = 'CONDICION_URGENTE'")
+    _sql("DELETE FROM notificaciones WHERE tipo = 'CONDICION_URGENTE'")
+    try:
+        command.downgrade(config, "0005_resuelta_at_alertas")
+        assert _sql(consulta) == []
+    finally:
+        command.upgrade(config, "head")
+    assert len(_sql(consulta)) == 1

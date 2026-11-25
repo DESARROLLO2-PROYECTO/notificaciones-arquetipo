@@ -180,6 +180,44 @@ class NotificacionRepo:
         r = self._s.get(m.Notificacion, id)
         return None if r is None else _notificacion_a_dominio(r)
 
+    def marcar_publicada(self, id: UUID, ahora: datetime) -> None:
+        self._s.execute(
+            update(m.Notificacion)
+            .where(m.Notificacion.id == id)
+            .values(
+                publicada_at=ahora,
+                proximo_intento_entrega=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
+            )
+        )
+
+    def registrar_fallo_publicacion(self, id: UUID, error: str) -> int:
+        return self._s.execute(
+            update(m.Notificacion)
+            .where(m.Notificacion.id == id)
+            .values(
+                intentos_publicacion=m.Notificacion.intentos_publicacion + 1,
+                ultimo_error_publicacion=error,
+            )
+            .returning(m.Notificacion.intentos_publicacion)
+        ).scalar_one()
+
+    def tomar_pendientes_publicacion(
+        self, ahora: datetime, limite: int
+    ) -> list[puertos.Notificacion]:
+        # SKIP LOCKED: dos ciclos simultáneos nunca toman la misma notificación.
+        filas = self._s.scalars(
+            select(m.Notificacion)
+            .where(
+                m.Notificacion.publicada_at.is_(None),
+                m.Notificacion.intentos_publicacion < puertos.MAX_INTENTOS_PUBLICACION,
+                m.Notificacion.creada_at <= ahora - puertos.ESPERA_REINTENTO_PUBLICACION,
+            )
+            .order_by(m.Notificacion.creada_at)
+            .limit(limite)
+            .with_for_update(skip_locked=True)
+        ).all()
+        return [_notificacion_a_dominio(r) for r in filas]
+
 
 def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
     return puertos.Alerta(
