@@ -40,3 +40,6 @@ coverage.xml
 .env-*
 .env.*
 !.env.example
+
+# Latido del planificador en ejecución local
+run/

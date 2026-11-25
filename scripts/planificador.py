@@ -12,6 +12,7 @@ vez, el ciclo ya evita procesar dos veces el mismo registro.
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
@@ -22,7 +23,9 @@ from typing import Protocol
 
 log = logging.getLogger("planificador")
 
-LATIDO = Path("/tmp/planificador.latido")  # se actualiza tras cada ciclo que termina
+# Se actualiza tras cada ciclo que termina. Relativo al directorio de trabajo (en la imagen,
+# /app/run, que pertenece al usuario de la app); no se usa /tmp, que es de escritura pública.
+LATIDO = Path(os.environ.get("PLANIFICADOR_LATIDO", "run/planificador.latido"))
 
 
 class _Servicio(Protocol):
@@ -42,6 +45,7 @@ def un_ciclo(servicio: _Servicio, latido: Path | None = LATIDO) -> bool:
     else:
         log.info("Ciclo completado: %s", detalle or "sin tareas")
     if latido is not None:
+        latido.parent.mkdir(parents=True, exist_ok=True)
         latido.touch()
     return not errores
 

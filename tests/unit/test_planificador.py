@@ -34,6 +34,15 @@ def test_un_ciclo_exitoso_se_registra_y_marca_el_latido(tmp_path: Path, caplog):
     assert "Ciclo completado: alertas=2, publicaciones=1" in caplog.text
 
 
+def test_el_latido_crea_su_carpeta_y_no_usa_tmp(tmp_path: Path):
+    latido = tmp_path / "run" / "planificador.latido"
+
+    planificador.un_ciclo(ServicioFalso([({}, [])]), latido)
+
+    assert latido.exists()
+    assert not str(planificador.LATIDO).startswith("/tmp")
+
+
 def test_un_ciclo_con_una_tarea_fallida_avisa_pero_sigue(tmp_path: Path, caplog):
     caplog.set_level(logging.INFO, logger="planificador")
 

@@ -9,7 +9,8 @@ RUN uv sync --frozen --no-dev --no-build
 FROM python:3.12.16-slim-bookworm AS runtime
 ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH=/app PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN useradd --system --uid 10001 --no-create-home app
+RUN useradd --system --uid 10001 --no-create-home app \
+    && mkdir /app/run && chown app /app/run  # latido del planificador (healthcheck)
 COPY --from=builder /app/.venv .venv
 COPY app app
 COPY migrations migrations
