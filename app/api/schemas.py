@@ -82,6 +82,15 @@ class NotificacionDuplicadaResponse(BaseModel):
     mensaje: str
 
 
+class MensajeResponse(BaseModel):
+    mensaje: str
+
+
+class CicloResponse(_Base):
+    alertas_cerradas: int
+    errores: list[str]
+
+
 class ErrorCampo(BaseModel):
     campo: str
     error: str
