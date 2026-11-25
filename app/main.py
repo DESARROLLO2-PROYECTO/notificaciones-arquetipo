@@ -8,7 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api import contrato
 from app.api.routers import equipos, health, notificaciones
+from app.api.webhooks import registrar_webhooks
 from app.config import get_settings
 from app.domain.errores import (
     ErrorDominio,
@@ -100,7 +102,17 @@ def create_app() -> FastAPI:
         yield
         cerrar_publicador()  # no hace nada si la cola nunca se usó
 
-    app = FastAPI(title="Notificaciones", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="API de Notificaciones",
+        version=contrato.API_VERSION,
+        description=contrato.DESCRIPCION,
+        openapi_tags=contrato.ETIQUETAS,
+        contact=contrato.CONTACTO,
+        servers=[{"url": "http://localhost:8090", "description": "Desarrollo local (compose)"}],
+        generate_unique_id_function=contrato.id_operacion,
+        lifespan=lifespan,
+    )
+    registrar_webhooks(app)
     app.add_exception_handler(ErrorDominio, _error_dominio)
     app.add_exception_handler(NoEncontrado, _error_dominio)
     app.add_exception_handler(NombreDuplicado, _error_dominio)

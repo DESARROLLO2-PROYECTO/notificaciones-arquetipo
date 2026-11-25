@@ -1,0 +1,939 @@
+{
+  "components": {
+    "schemas": {
+      "CicloResponse": {
+        "properties": {
+          "alertasCerradas": {
+            "description": "Alertas vencidas cerradas con motivo EXPIRACION",
+            "title": "Alertascerradas",
+            "type": "integer"
+          },
+          "errores": {
+            "description": "Tareas del ciclo que fallaron; las demás continuaron",
+            "items": {
+              "type": "string"
+            },
+            "title": "Errores",
+            "type": "array"
+          }
+        },
+        "required": [
+          "alertasCerradas",
+          "errores"
+        ],
+        "title": "CicloResponse",
+        "type": "object"
+      },
+      "CrearNotificacionRequest": {
+        "additionalProperties": false,
+        "description": "Evento de stock bajo. REPUESTO y RESUELTA llevan los mismos datos de la activación.",
+        "examples": [
+          {
+            "evento": "DETECTADA",
+            "nombre": "Acero inoxidable 304",
+            "productoId": "INS-001",
+            "stockActual": 4,
+            "stockMinimo": 10,
+            "tipo": "STOCK_BAJO_INSUMO"
+          },
+          {
+            "evento": "REPUESTO",
+            "nombre": "Acero inoxidable 304",
+            "productoId": "INS-001",
+            "stockActual": 40,
+            "stockMinimo": 10,
+            "tipo": "STOCK_BAJO_INSUMO"
+          }
+        ],
+        "properties": {
+          "evento": {
+            "$ref": "#/components/schemas/EventoNotificacion",
+            "default": "DETECTADA",
+            "description": "DETECTADA activa la alerta; REPUESTO o RESUELTA la resuelven"
+          },
+          "nombre": {
+            "description": "Nombre del artículo",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Nombre",
+            "type": "string"
+          },
+          "productoId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Código del artículo: entero o texto de 1 a 50 (letras, números y guion)",
+            "title": "Productoid"
+          },
+          "stockActual": {
+            "description": "Existencia actual",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Stockactual",
+            "type": "integer"
+          },
+          "stockMinimo": {
+            "description": "Mínimo establecido",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Stockminimo",
+            "type": "integer"
+          },
+          "tipo": {
+            "$ref": "#/components/schemas/TipoStockBajo",
+            "description": "STOCK_BAJO_INSUMO para materias primas y artículos de terceros; STOCK_BAJO_PRODUCTO para cadenas y cuchillas"
+          }
+        },
+        "required": [
+          "tipo",
+          "productoId",
+          "nombre",
+          "stockActual",
+          "stockMinimo"
+        ],
+        "title": "CrearNotificacionRequest",
+        "type": "object"
+      },
+      "EquipoIn": {
+        "properties": {
+          "esAdmin": {
+            "description": "Verdadero solo para el equipo de administración",
+            "title": "Esadmin",
+            "type": "boolean"
+          },
+          "nombre": {
+            "description": "Nombre único",
+            "maxLength": 50,
+            "minLength": 1,
+            "pattern": "^[^\\x00]+$",
+            "title": "Nombre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nombre",
+          "esAdmin"
+        ],
+        "title": "EquipoIn",
+        "type": "object"
+      },
+      "EquipoOut": {
+        "properties": {
+          "esAdmin": {
+            "title": "Esadmin",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "Identificador del equipo",
+            "title": "Id",
+            "type": "integer"
+          },
+          "nombre": {
+            "title": "Nombre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "nombre",
+          "esAdmin"
+        ],
+        "title": "EquipoOut",
+        "type": "object"
+      },
+      "ErrorCampo": {
+        "properties": {
+          "campo": {
+            "description": "Campo del cuerpo o parámetro con el problema",
+            "title": "Campo",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campo",
+          "error"
+        ],
+        "title": "ErrorCampo",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "Error sin detalle por campo: 401, 403, 404, 409 y 500.",
+        "properties": {
+          "mensaje": {
+            "title": "Mensaje",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mensaje"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "ErrorValidacionResponse": {
+        "properties": {
+          "errores": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorCampo"
+            },
+            "title": "Errores",
+            "type": "array"
+          },
+          "mensaje": {
+            "title": "Mensaje",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mensaje",
+          "errores"
+        ],
+        "title": "ErrorValidacionResponse",
+        "type": "object"
+      },
+      "EventoNotificacion": {
+        "enum": [
+          "DETECTADA",
+          "REPUESTO",
+          "RESUELTA"
+        ],
+        "title": "EventoNotificacion",
+        "type": "string"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MensajeResponse": {
+        "properties": {
+          "mensaje": {
+            "title": "Mensaje",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mensaje"
+        ],
+        "title": "MensajeResponse",
+        "type": "object"
+      },
+      "NotificacionCreadaResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mensaje": {
+            "title": "Mensaje",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mensaje"
+        ],
+        "title": "NotificacionCreadaResponse",
+        "type": "object"
+      },
+      "NotificacionDuplicadaResponse": {
+        "properties": {
+          "duplicada": {
+            "default": true,
+            "title": "Duplicada",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mensaje": {
+            "title": "Mensaje",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mensaje"
+        ],
+        "title": "NotificacionDuplicadaResponse",
+        "type": "object"
+      },
+      "NotificacionEntregada": {
+        "description": "Cuerpo del POST que recibe el callback del equipo destino.",
+        "examples": [
+          {
+            "datos": {
+              "nombre": "Acero inoxidable 304",
+              "productoId": "INS-001",
+              "stockActual": 4,
+              "stockMinimo": 10
+            },
+            "equipoDestino": "inventario",
+            "equipoEmisor": "inventario",
+            "fechaRegistro": "2026-11-25T14:30:00Z",
+            "id": "0b6f1c7e-5f4e-4d62-9c1a-3f6d0f2f9a11",
+            "mensaje": "[STOCK_BAJO_INSUMO] Acero 304 (INS-001): stock 4, mínimo 10",
+            "tipo": "STOCK_BAJO_INSUMO"
+          }
+        ],
+        "properties": {
+          "datos": {
+            "additionalProperties": true,
+            "description": "Datos propios del tipo, tal como los envió el emisor",
+            "title": "Datos",
+            "type": "object"
+          },
+          "equipoDestino": {
+            "description": "Rol que debe atenderlo",
+            "title": "Equipodestino",
+            "type": "string"
+          },
+          "equipoEmisor": {
+            "description": "Rol que reportó el evento",
+            "title": "Equipoemisor",
+            "type": "string"
+          },
+          "fechaRegistro": {
+            "description": "Cuándo se registró, en UTC ISO 8601",
+            "format": "date-time",
+            "title": "Fecharegistro",
+            "type": "string"
+          },
+          "id": {
+            "description": "Identificador de la notificación; igual a `X-Notification-Id`",
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mensaje": {
+            "description": "Texto legible, de máximo 200 caracteres",
+            "maxLength": 200,
+            "title": "Mensaje",
+            "type": "string"
+          },
+          "tipo": {
+            "description": "Tipo del catálogo, por ejemplo STOCK_BAJO_INSUMO",
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tipo",
+          "equipoEmisor",
+          "equipoDestino",
+          "fechaRegistro",
+          "mensaje",
+          "datos"
+        ],
+        "title": "NotificacionEntregada",
+        "type": "object"
+      },
+      "TipoStockBajo": {
+        "enum": [
+          "STOCK_BAJO_INSUMO",
+          "STOCK_BAJO_PRODUCTO"
+        ],
+        "title": "TipoStockBajo",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "in": "header",
+        "name": "X-API-Key",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "name": "Equipo 5 · Notificaciones (Desarrollo de Software II)"
+    },
+    "description": "Módulo de **Notificaciones** del software de fabricación de Cutit Saws. Inventario y Fabricación\nle reportan eventos (por ejemplo, stock bajo) y el módulo los registra, evita duplicados, los\npublica en una cola interna y los entrega al equipo destino.\n\n## Autenticación\n\nToda solicitud (excepto `/health` y esta documentación) lleva la llave del equipo en el header\n`X-API-Key`. Cada llave tiene un rol (`inventario`, `fabricacion` o `notificaciones`) y solo puede\nemitir los tipos de su rol. Una llave enviada en la URL o en el cuerpo se ignora. Las llaves las\nentrega Notificaciones por un canal privado y se guardan solo como hash.\n\n## Convenciones\n\n- JSON en `camelCase`; fechas en UTC con formato ISO 8601.\n- Un evento `DETECTADA` repetido mientras la alerta sigue activa **no** crea otra notificación:\n  responde `200` con el id existente y `duplicada: true`. Es seguro reintentar.\n- Errores: `401` y `403` responden `{\"mensaje\": \"Acceso denegado\"}`; `422` lista los campos con\n  problema; `500` no expone detalles internos.\n- Los mensajes de error no cambian entre versiones menores: puede comparar contra ellos.\n\n## Entrega al equipo destino\n\nCada notificación se publica en una cola interna y se entrega por **webhook** a la URL que el\nequipo registre (ver `webhooks` y HU-NOT-16/17). Desde el Sprint 3 las entregas llevan firma\nHMAC; el receptor debe ignorar las repetidas usando `X-Notification-Id`.",
+    "title": "API de Notificaciones",
+    "version": "0.2.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/equipos": {
+      "post": {
+        "description": "Registra un equipo. El nombre debe ser único (409 si ya existe).",
+        "operationId": "crear",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EquipoIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquipoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Llave ausente, vacía, inválida o desactivada"
+          },
+          "409": {
+            "description": "Ya existe un equipo con ese nombre"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "errores": [
+                    {
+                      "campo": "stockActual",
+                      "error": "Input should be greater than or equal to 0"
+                    }
+                  ],
+                  "mensaje": "Los datos enviados no cumplen las reglas establecidas"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorValidacionResponse"
+                }
+              }
+            },
+            "description": "Los datos no cumplen las reglas; `errores` indica cada campo"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Error interno, intente de nuevo"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Falla interna; no se guardó nada a medias"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Crear un equipo",
+        "tags": [
+          "administración"
+        ]
+      }
+    },
+    "/equipos/{id}": {
+      "get": {
+        "description": "Devuelve el equipo por su identificador (404 si no existe).",
+        "operationId": "obtener",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquipoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Llave ausente, vacía, inválida o desactivada"
+          },
+          "404": {
+            "description": "Equipo no encontrado"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "errores": [
+                    {
+                      "campo": "stockActual",
+                      "error": "Input should be greater than or equal to 0"
+                    }
+                  ],
+                  "mensaje": "Los datos enviados no cumplen las reglas establecidas"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorValidacionResponse"
+                }
+              }
+            },
+            "description": "Los datos no cumplen las reglas; `errores` indica cada campo"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Error interno, intente de nuevo"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Falla interna; no se guardó nada a medias"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Consultar un equipo",
+        "tags": [
+          "administración"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Responde `{\"status\": \"UP\"}` si el proceso está vivo. No consulta la base.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Estado del proceso",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/notificaciones": {
+      "post": {
+        "description": "El emisor reporta un evento sobre un artículo. Su llave debe ser del rol que emite el tipo (inventario para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO).\n\n- **DETECTADA**: registra la notificación y activa la alerta del artículo (`201`). Si ya hay una alerta activa para ese tipo y `productoId`, no crea otra: responde `200` con el id original y `duplicada: true`. La alerta vence a las 24 h; el reenvío no renueva ese plazo.\n- **REPUESTO** o **RESUELTA**, con los mismos datos de la activación: resuelve la alerta activa (`200`, «Alerta resuelta correctamente»). Sin alerta activa no cambia nada (`200`, «No había una alerta activa»). Un nuevo DETECTADA vuelve a notificar.\n\nLa respuesta no espera la entrega al equipo destino.",
+        "operationId": "crearNotificacion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrearNotificacionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "duplicada": {
+                    "summary": "DETECTADA con alerta activa",
+                    "value": {
+                      "duplicada": true,
+                      "id": "0b6f1c7e-5f4e-4d62-9c1a-3f6d0f2f9a11",
+                      "mensaje": "Ya existe una alerta activa para este artículo"
+                    }
+                  },
+                  "resuelta": {
+                    "summary": "REPUESTO o RESUELTA con alerta activa",
+                    "value": {
+                      "mensaje": "Alerta resuelta correctamente"
+                    }
+                  },
+                  "sinAlerta": {
+                    "summary": "REPUESTO o RESUELTA sin alerta activa",
+                    "value": {
+                      "mensaje": "No había una alerta activa"
+                    }
+                  }
+                },
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NotificacionDuplicadaResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MensajeResponse"
+                    }
+                  ],
+                  "title": "Response 200 Crearnotificacion"
+                }
+              }
+            },
+            "description": "Alerta ya activa (DETECTADA repetido) o resultado de una resolución"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "id": "0b6f1c7e-5f4e-4d62-9c1a-3f6d0f2f9a11",
+                  "mensaje": "Notificación registrada correctamente"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/NotificacionCreadaResponse",
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NotificacionCreadaResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NotificacionDuplicadaResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MensajeResponse"
+                    }
+                  ],
+                  "title": "Response Crearnotificacion"
+                }
+              }
+            },
+            "description": "Notificación registrada y alerta activada"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Llave ausente, vacía, inválida o desactivada"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "La llave es válida pero su rol no puede hacer esta operación"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "errores": [
+                    {
+                      "campo": "stockActual",
+                      "error": "Input should be greater than or equal to 0"
+                    }
+                  ],
+                  "mensaje": "Los datos enviados no cumplen las reglas establecidas"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorValidacionResponse"
+                }
+              }
+            },
+            "description": "Los datos no cumplen las reglas; `errores` indica cada campo"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Error interno, intente de nuevo"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Falla interna; no se guardó nada a medias"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Registrar o resolver una notificación de stock bajo",
+        "tags": [
+          "notificaciones"
+        ]
+      }
+    },
+    "/notificaciones/ciclo": {
+      "post": {
+        "description": "Corre las tareas periódicas; hoy cierra con motivo EXPIRACION las alertas vencidas. Solo la API Key del rol `notificaciones`; pensado para invocarse de forma externa y periódica. Ciclos simultáneos nunca procesan la misma alerta dos veces.",
+        "operationId": "ejecutarCiclo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "alertasCerradas": 2,
+                  "errores": []
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CicloResponse"
+                }
+              }
+            },
+            "description": "Resumen del ciclo"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Llave ausente, vacía, inválida o desactivada"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Acceso denegado"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "La llave es válida pero su rol no puede hacer esta operación"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "mensaje": "Error interno, intente de nuevo"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Falla interna; no se guardó nada a medias"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Ejecutar el ciclo de notificaciones",
+        "tags": [
+          "administración"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Desarrollo local (compose)",
+      "url": "http://localhost:8090"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Eventos que reportan Inventario y Fabricación (llave del rol emisor).",
+      "name": "notificaciones"
+    },
+    {
+      "description": "Uso interno de Notificaciones (llave del rol `notificaciones`).",
+      "name": "administración"
+    },
+    {
+      "description": "Estado del proceso. No requiere llave.",
+      "name": "health"
+    }
+  ],
+  "webhooks": {
+    "notificacion": {
+      "post": {
+        "description": "Notificaciones envía este POST a la URL que el equipo destino registró (HU-NOT-16), con un tiempo de espera de 10 segundos.\n\n- `X-Signature` es el HMAC SHA-256 en hexadecimal, con el secreto del callback, de `X-Timestamp`, un punto y el cuerpo crudo (`<timestamp>.<cuerpo>`). Rechace la solicitud si la firma no coincide o si `X-Timestamp` tiene más de 5 minutos.\n- Responda **cualquier 2xx** para confirmar. Otro código, un tiempo de espera o un error de conexión se reintentan a los 5 minutos, hasta 3 intentos.\n- La entrega es *al menos una vez*: use `X-Notification-Id` para ignorar repetidas.",
+        "operationId": "recibirNotificacion",
+        "parameters": [
+          {
+            "description": "Id de la notificación",
+            "in": "header",
+            "name": "X-Notification-Id",
+            "required": true,
+            "schema": {
+              "description": "Id de la notificación",
+              "format": "uuid",
+              "title": "X-Notification-Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Fecha de envío, UTC ISO 8601",
+            "in": "header",
+            "name": "X-Timestamp",
+            "required": true,
+            "schema": {
+              "description": "Fecha de envío, UTC ISO 8601",
+              "format": "date-time",
+              "title": "X-Timestamp",
+              "type": "string"
+            }
+          },
+          {
+            "description": "HMAC SHA-256 hexadecimal",
+            "in": "header",
+            "name": "X-Signature",
+            "required": true,
+            "schema": {
+              "description": "HMAC SHA-256 hexadecimal",
+              "title": "X-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificacionEntregada"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Entrega de una notificación (disponible desde HU-NOT-17, Sprint 3)",
+        "tags": [
+          "notificaciones"
+        ]
+      }
+    }
+  }
+}
