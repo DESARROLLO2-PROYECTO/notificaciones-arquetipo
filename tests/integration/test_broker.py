@@ -110,3 +110,23 @@ def test_la_sonda_publica_y_consume_sin_tocar_las_colas_de_los_equipos(rabbitmq,
 
     assert 0 < segundos < 5
     assert len(asyncio.run(_leer(rabbitmq, "inventario"))) == 1  # el mensaje real sigue ahí
+
+
+def test_precalentar_deja_la_topologia_lista_sin_publicar(rabbitmq):
+    publicador = PublicadorAmqp(rabbitmq, timeout_s=10)
+    try:
+        publicador.precalentar()
+        for _ in range(50):
+            try:
+                asyncio.run(_leer(rabbitmq, "fabricacion"))  # cola pasiva: falla si no existe
+                break
+            except aio_pika.exceptions.AMQPError:
+                time.sleep(0.2)
+        else:
+            pytest.fail("La topología no quedó declarada")
+        inicio = time.monotonic()
+        publicador.publicar(MensajeNotificacion(uuid4(), "STOCK_BAJO_PRODUCTO", "fabricacion"))
+        assert time.monotonic() - inicio < 1  # ya conectado: sin pagar la conexión
+    finally:
+        publicador.cerrar()
+    assert len(asyncio.run(_leer(rabbitmq, "fabricacion"))) == 1

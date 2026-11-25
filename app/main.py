@@ -18,7 +18,7 @@ from app.domain.errores import (
     NombreDuplicado,
     TipoNotificacionInvalido,
 )
-from app.infrastructure.broker import cerrar_publicador
+from app.infrastructure.broker import cerrar_publicador, precalentar_publicador
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        precalentar_publicador()
         yield
         cerrar_publicador()  # no hace nada si la cola nunca se usó
 

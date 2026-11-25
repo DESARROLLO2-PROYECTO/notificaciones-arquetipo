@@ -1,4 +1,5 @@
 import json
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -82,3 +83,32 @@ def test_la_sonda_no_imprime_la_clave_si_falla(capsys):
     salida = capsys.readouterr()
     assert codigo == 1
     assert "clave-secreta" not in salida.out + salida.err
+
+
+def test_precalentar_sin_amqp_url_no_hace_nada(monkeypatch):
+    _con_ajustes(monkeypatch, None)
+
+    broker.precalentar_publicador()
+
+    assert broker.obtener_publicador.cache_info().currsize == 0
+
+
+def test_el_arranque_de_la_api_sigue_si_el_broker_no_responde(monkeypatch, caplog):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://x:x@localhost/x")
+    _con_ajustes(monkeypatch, "amqp://test:clave-secreta@127.0.0.1:1/")
+    caplog.set_level("INFO", logger="app.infrastructure.broker")
+
+    with TestClient(create_app()) as cliente:
+        assert cliente.get("/health").status_code == 200
+        for _ in range(50):  # el aviso llega cuando vence el intento de conexión
+            if "no disponible al arrancar" in caplog.text:
+                break
+            time.sleep(0.2)
+
+    assert "Cola de mensajes no disponible al arrancar (" in caplog.text
+    assert "clave-secreta" not in caplog.text
+    assert broker.obtener_publicador.cache_info().currsize == 0  # lo cerró el apagado
