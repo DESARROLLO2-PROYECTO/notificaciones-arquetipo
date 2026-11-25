@@ -78,7 +78,7 @@ def _setup_db(_postgres):
 
     with Session(get_engine()) as session, session.begin():
         servicio = ApiKeyService(ApiKeyRepo(session))
-        for rol in ("inventario", "fabricacion"):
+        for rol in ("inventario", "fabricacion", "notificaciones"):
             LLAVES[rol] = servicio.generar(rol).llave
 
 
@@ -382,3 +382,192 @@ def test_colision_de_alerta_activa_en_flush_se_traduce_a_error_de_concurrencia(_
                 puertos.Alerta(tipo="STOCK_BAJO_INSUMO", clave=clave, notificacion_id=segunda.id)
             )
         session.rollback()
+
+
+# --- HU-NOT-02: resolver alertas y ciclo de limpieza ---
+
+
+def _sql(sentencia: str, **params):
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.begin() as conn:
+        resultado = conn.execute(text(sentencia), params)
+        filas = resultado.all() if resultado.returns_rows else None
+    engine.dispose()
+    return filas
+
+
+def _vencer(clave: str) -> None:
+    _sql(
+        "UPDATE alertas SET expira_at = now() - interval '1 minute' "
+        "WHERE clave = :clave AND motivo_resolucion IS NULL",
+        clave=clave,
+    )
+
+
+def _ciclo(client, rol: str = "notificaciones"):
+    return client.post("/notificaciones/ciclo", headers={"X-API-Key": LLAVES[rol]})
+
+
+@pytest.mark.parametrize("evento", ["REPUESTO", "RESUELTA"])
+def test_evento_de_resolucion_cierra_la_alerta_200(client, evento):
+    cuerpo = _cuerpo()
+    creada = _post(client, cuerpo).json()
+
+    r = _post(client, {**cuerpo, "evento": evento})
+
+    assert r.status_code == 200
+    assert r.json() == {"mensaje": "Alerta resuelta correctamente"}
+    (fila,) = _sql(
+        "SELECT motivo_resolucion, resuelta_at FROM alertas WHERE notificacion_id = :id",
+        id=creada["id"],
+    )
+    assert fila[0] == "emisor"
+    assert fila[1] is not None
+    assert _sql("SELECT count(*) FROM notificaciones WHERE id = :id", id=creada["id"]) == [(1,)]
+
+
+def test_resolver_sin_alerta_activa_200_sin_cambios(client):
+    cuerpo = _cuerpo(evento="REPUESTO")
+    antes = _sql("SELECT count(*) FROM notificaciones")
+
+    r = _post(client, cuerpo)
+
+    assert r.status_code == 200
+    assert r.json() == {"mensaje": "No había una alerta activa"}
+    assert _sql("SELECT count(*) FROM notificaciones") == antes
+    assert _sql("SELECT count(*) FROM alertas WHERE clave = :c", c=cuerpo["productoId"]) == [(0,)]
+
+
+def test_resolver_con_emisor_distinto_403(client):
+    cuerpo = _cuerpo()
+    _post(client, cuerpo)
+
+    r = _post(client, {**cuerpo, "evento": "RESUELTA"}, rol="fabricacion")
+
+    assert r.status_code == 403
+
+
+def test_detectada_tras_resolver_crea_otra_notificacion_201(client):
+    cuerpo = _cuerpo()
+    primera = _post(client, cuerpo).json()
+    _post(client, {**cuerpo, "evento": "RESUELTA"})
+
+    r = _post(client, cuerpo)
+
+    assert r.status_code == 201
+    assert r.json()["id"] != primera["id"]
+
+
+def test_detectada_con_alerta_vencida_sin_limpiar_201(client):
+    cuerpo = _cuerpo()
+    primera = _post(client, cuerpo).json()
+    _vencer(cuerpo["productoId"])
+
+    r = _post(client, cuerpo)
+
+    assert r.status_code == 201
+    assert r.json()["id"] != primera["id"]
+    motivos = _sql(
+        "SELECT motivo_resolucion FROM alertas WHERE clave = :c ORDER BY id",
+        c=cuerpo["productoId"],
+    )
+    assert motivos == [("expiracion",), (None,)]
+
+
+def test_ciclo_cierra_las_vencidas_y_registra_el_resumen(client, caplog):
+    caplog.set_level("INFO")
+    # El ciclo cierra todas las vencidas: se vacía la tabla de las de otras pruebas
+    _sql("UPDATE alertas SET motivo_resolucion = 'emisor' WHERE motivo_resolucion IS NULL")
+    claves = []
+    for _ in range(3):
+        cuerpo = _cuerpo()
+        _post(client, cuerpo)
+        claves.append(cuerpo["productoId"])
+    vigente = _cuerpo()
+    _post(client, vigente)
+    for clave in claves:
+        _vencer(clave)
+
+    r = _ciclo(client)
+
+    assert r.status_code == 200
+    assert r.json() == {"alertasCerradas": 3, "errores": []}
+    assert "Limpieza de alertas completada: 3 alertas expiradas" in caplog.text
+    assert _sql(
+        "SELECT motivo_resolucion FROM alertas WHERE clave = :c", c=vigente["productoId"]
+    ) == [(None,)]
+    assert _ciclo(client).json() == {"alertasCerradas": 0, "errores": []}
+
+
+def test_ciclo_con_tarea_fallida_responde_200_con_errores(app):
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import get_servicio_notificaciones
+    from app.domain.notificacion_service import ServicioNotificaciones
+
+    class ServicioConTareaRota(ServicioNotificaciones):
+        def _tareas_ciclo(self):
+            def rota() -> int:
+                raise RuntimeError("falla simulada")
+
+            return (("alertas", rota),)
+
+    app.dependency_overrides[get_servicio_notificaciones] = lambda: ServicioConTareaRota(
+        lambda: None  # type: ignore[arg-type,return-value]
+    )
+    try:
+        with TestClient(app) as c:
+            r = _ciclo(c)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    assert r.json() == {"alertasCerradas": 0, "errores": ["alertas"]}
+
+
+def test_ciclo_con_llave_de_otro_rol_403(client):
+    r = _ciclo(client, rol="inventario")
+
+    assert r.status_code == 403
+    assert r.json() == {"mensaje": "Acceso denegado"}
+
+
+def test_ciclo_sin_llave_401(client):
+    assert client.post("/notificaciones/ciclo").status_code == 401
+
+
+def test_ciclos_simultaneos_no_cierran_dos_veces_la_misma_alerta(app, client):
+    from fastapi.testclient import TestClient
+
+    _sql("UPDATE alertas SET motivo_resolucion = 'emisor' WHERE motivo_resolucion IS NULL")
+    for _ in range(10):
+        cuerpo = _cuerpo()
+        _post(client, cuerpo)
+        _vencer(cuerpo["productoId"])
+
+    def correr():
+        with TestClient(app) as c:
+            return _ciclo(c).json()["alertasCerradas"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cerradas = [f.result() for f in [pool.submit(correr), pool.submit(correr)]]
+
+    assert sum(cerradas) == 10
+
+
+def test_migracion_0005_agrega_y_quita_resuelta_at(_setup_db):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    config = Config("alembic.ini")
+    engine = create_engine(os.environ["DATABASE_URL"])
+    try:
+        command.downgrade(config, "0004_catalogo_tipos")
+        assert "resuelta_at" not in {c["name"] for c in inspect(engine).get_columns("alertas")}
+    finally:
+        command.upgrade(config, "head")
+    assert "resuelta_at" in {c["name"] for c in inspect(engine).get_columns("alertas")}
+    engine.dispose()

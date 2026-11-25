@@ -13,13 +13,16 @@ from app.domain.errores import (
     NoAutorizado,
     TipoNotificacionInvalido,
 )
+from app.domain.puertos import ResolucionAlerta
 
 logger = logging.getLogger("notificaciones")
+
+_EVENTOS_RESOLUCION = ("REPUESTO", "RESUELTA")
 
 
 @dataclass(frozen=True)
 class ResultadoRegistro:
-    notificacion_id: UUID
+    notificacion_id: UUID | None  # None si no había alerta activa que resolver
     duplicada: bool
     tipo: str
     destino: str
@@ -41,22 +44,26 @@ class ServicioNotificaciones:
         ahora = datetime.now(UTC)
         clave = str(datos["productoId"])
 
+        argumentos: dict[str, Any] = {
+            "ahora": ahora,
+            "evento": evento,
+            "tipo_codigo": tipo_codigo,
+            "clave": clave,
+            "datos": datos,
+            "equipo_emisor_id": equipo_emisor_id,
+        }
         try:
-            return self._intentar_registro(
-                ahora=ahora,
-                tipo_codigo=tipo_codigo,
-                clave=clave,
-                datos=datos,
-                equipo_emisor_id=equipo_emisor_id,
-            )
+            return self._intentar_registro(**argumentos)
         except ErrorConcurrenciaAlerta:
             # Criterio 6: Dos requests llegaron al mismo tiempo sin alerta previa.
             # El otro request ganó el INSERT; leemos su alerta activa y respondemos 200.
             with self._uow_factory() as uow:
                 destino = self._resolver_destino(uow, tipo_codigo)
-                alerta = uow.alertas.obtener_activa(tipo=tipo_codigo, clave=clave)
+                alerta = uow.alertas.obtener_activa(tipo_codigo, clave, ahora)
                 if alerta is None:
-                    raise  # Falla inesperada -> 500
+                    # El ganador ya se resolvió (REPUESTO concurrente): un único reintento.
+                    # Si vuelve a chocar, el error sube -> 500
+                    return self._intentar_registro(**argumentos)
                 res = ResultadoRegistro(
                     notificacion_id=alerta.notificacion_id,
                     duplicada=True,
@@ -71,6 +78,7 @@ class ServicioNotificaciones:
     def _intentar_registro(
         self,
         ahora: datetime,
+        evento: str,
         tipo_codigo: str,
         clave: str,
         datos: dict[str, Any],
@@ -92,8 +100,15 @@ class ServicioNotificaciones:
                 self._log_rechazo(tipo_notif.codigo, destino, clave)
                 raise NoAutorizado("emisor no permitido")
 
+            if evento in _EVENTOS_RESOLUCION:
+                return self._resolver_alerta(uow, ahora, tipo_notif.codigo, destino, clave)
+
+            # Una alerta vencida y sin limpiar se cierra antes de insertar la nueva:
+            # el índice único parcial solo admite una alerta sin motivo por tipo y clave.
+            vencidas = uow.alertas.expirar_vencidas(ahora, tipo_notif.codigo, clave)
+
             # 1. Buscar alerta activa bloqueando fila si ya existe (FOR UPDATE)
-            alerta = uow.alertas.obtener_activa(tipo=tipo_notif.codigo, clave=clave)
+            alerta = uow.alertas.obtener_activa(tipo_notif.codigo, clave, ahora)
 
             if alerta is not None:
                 res = ResultadoRegistro(
@@ -139,6 +154,8 @@ class ServicioNotificaciones:
             # traduce IntegrityError -> ErrorConcurrenciaAlerta
             uow.commit()
 
+        for vencida in vencidas:
+            self._log_resolucion(vencida, ResolucionAlerta.EXPIRACION)
         res = ResultadoRegistro(
             notificacion_id=notificacion.id,
             duplicada=False,
@@ -149,6 +166,56 @@ class ServicioNotificaciones:
         )
         self._log_resultado(res)
         return res
+
+    def _resolver_alerta(
+        self, uow: puertos.UnitOfWork, ahora: datetime, tipo: str, destino: str, clave: str
+    ) -> ResultadoRegistro:
+        alerta = uow.alertas.obtener_activa(tipo, clave, ahora)
+        if alerta is None or alerta.id is None:
+            res = ResultadoRegistro(None, False, tipo, destino, clave, "SIN_ALERTA_ACTIVA")
+        else:
+            uow.alertas.resolver(alerta.id, ResolucionAlerta.EMISOR, ahora)
+            uow.commit()
+            self._log_resolucion(alerta, ResolucionAlerta.EMISOR)
+            res = ResultadoRegistro(alerta.notificacion_id, False, tipo, destino, clave, "RESUELTA")
+        self._log_resultado(res)
+        return res
+
+    def ejecutar_ciclo(self) -> tuple[dict[str, int], list[str]]:
+        """Corre las tareas del ciclo; una que falle no detiene a las demás.
+
+        Devuelve el resumen por tarea y los nombres de las tareas que fallaron.
+        """
+        resumen: dict[str, int] = {}
+        errores: list[str] = []
+        for nombre, tarea in self._tareas_ciclo():
+            try:
+                resumen[nombre] = tarea()
+            except Exception:
+                logger.exception("Falló la tarea del ciclo: %s", nombre)
+                errores.append(nombre)
+        return resumen, errores
+
+    def _tareas_ciclo(self) -> tuple[tuple[str, Callable[[], int]], ...]:
+        return (("alertas", self._limpiar_alertas),)
+
+    def _limpiar_alertas(self) -> int:
+        with self._uow_factory() as uow:
+            cerradas = uow.alertas.expirar_vencidas(datetime.now(UTC))
+            uow.commit()
+        for alerta in cerradas:
+            self._log_resolucion(alerta, ResolucionAlerta.EXPIRACION)
+        logger.info("Limpieza de alertas completada: %d alertas expiradas", len(cerradas))
+        return len(cerradas)
+
+    def _log_resolucion(self, alerta: puertos.Alerta, motivo: ResolucionAlerta) -> None:
+        logger.info(
+            "Alerta %s/%s resuelta por %s notificacion_id=%s",
+            alerta.tipo,
+            alerta.clave,
+            motivo.name,
+            alerta.notificacion_id,
+        )
 
     def _armar_mensaje(self, tipo: str, datos: dict[str, Any]) -> str:
         texto = (

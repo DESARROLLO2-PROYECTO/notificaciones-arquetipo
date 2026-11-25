@@ -61,8 +61,7 @@ class FakeAlertaRepo:
         self._uow._pendientes_alertas.append(asignada)
         return asignada
 
-    def obtener_activa(self, tipo: str, clave: str) -> puertos.Alerta | None:
-        ahora = datetime.now(UTC)
+    def obtener_activa(self, tipo: str, clave: str, ahora: datetime) -> puertos.Alerta | None:
         for alerta in self._uow.alertas_guardadas:
             if (
                 alerta.tipo == tipo
@@ -72,6 +71,32 @@ class FakeAlertaRepo:
             ):
                 return alerta
         return None
+
+    def resolver(self, id: int, motivo: puertos.ResolucionAlerta, ahora: datetime) -> None:
+        for i, alerta in enumerate(self._uow.alertas_guardadas):
+            if alerta.id == id:
+                self._uow.alertas_guardadas[i] = replace(
+                    alerta, motivo_resolucion=motivo, resuelta_at=ahora
+                )
+
+    def expirar_vencidas(
+        self, ahora: datetime, tipo: str | None = None, clave: str | None = None
+    ) -> list[puertos.Alerta]:
+        cerradas = []
+        for i, alerta in enumerate(self._uow.alertas_guardadas):
+            if (
+                alerta.motivo_resolucion is None
+                and alerta.expira_at is not None
+                and alerta.expira_at <= ahora
+                and tipo in (None, alerta.tipo)
+                and clave in (None, alerta.clave)
+            ):
+                cerrada = replace(
+                    alerta, motivo_resolucion=puertos.ResolucionAlerta.EXPIRACION, resuelta_at=ahora
+                )
+                self._uow.alertas_guardadas[i] = cerrada
+                cerradas.append(cerrada)
+        return cerradas
 
 
 class FakeUnitOfWork:
@@ -455,7 +480,8 @@ def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
     # obtener_activa sigue devolviendo None -> cubre línea 53 (raise)
     uow_2.alertas.obtener_activa.return_value = None
 
-    uows = iter([uow_1, uow_2])
+    # El reintento único vuelve a chocar: el error sube
+    uows = iter([uow_1, uow_2, uow_1])
     servicio = ServicioNotificaciones(lambda: next(uows))
 
     with pytest.raises(ErrorConcurrenciaAlerta):
@@ -492,3 +518,143 @@ def test_resolver_destino_sin_equipo_destino_o_equipo_inexistente():
 
     assert res.destino == "desconocido"
     uow.equipos.obtener.assert_not_called()
+
+
+# --- HU-NOT-02: resolver alertas activas ---
+
+
+def _registrar(servicio: ServicioNotificaciones, evento: str = "DETECTADA", **cambios):
+    datos = _datos_stock(evento=evento, **cambios)
+    return servicio.registrar_notificacion("STOCK_BAJO_INSUMO", evento, datos, equipo_emisor_id=1)
+
+
+@pytest.mark.parametrize("evento", ["REPUESTO", "RESUELTA"])
+def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplog, evento):
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    original = _registrar(servicio)
+
+    res = _registrar(servicio, evento)
+
+    assert res.resultado_log == "RESUELTA"
+    assert res.notificacion_id == original.notificacion_id
+    alerta = uow.alertas_guardadas[0]
+    assert alerta.motivo_resolucion == puertos.ResolucionAlerta.EMISOR
+    assert alerta.resuelta_at is not None
+    assert len(uow.notificaciones_guardadas) == 1
+    assert (
+        f"Alerta STOCK_BAJO_INSUMO/INS-001 resuelta por EMISOR "
+        f"notificacion_id={original.notificacion_id}" in caplog.text
+    )
+
+
+def test_evento_de_resolucion_sin_alerta_activa_no_escribe(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow)
+
+    res = _registrar(servicio, "REPUESTO")
+
+    assert res.resultado_log == "SIN_ALERTA_ACTIVA"
+    assert res.notificacion_id is None
+    assert uow.commits == 0
+    assert not uow.alertas_guardadas
+    assert not uow.notificaciones_guardadas
+
+
+def test_evento_de_resolucion_de_otro_emisor_es_no_autorizado(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow)
+    _registrar(servicio)
+
+    with pytest.raises(NoAutorizado):
+        servicio.registrar_notificacion(
+            "STOCK_BAJO_INSUMO", "REPUESTO", _datos_stock(evento="REPUESTO"), equipo_emisor_id=2
+        )
+
+    assert uow.alertas_guardadas[0].motivo_resolucion is None
+
+
+def test_detectada_tras_resolver_registra_nueva_notificacion(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow)
+    primera = _registrar(servicio)
+    _registrar(servicio, "RESUELTA")
+
+    nueva = _registrar(servicio)
+
+    assert nueva.resultado_log == "REGISTRADA"
+    assert nueva.notificacion_id != primera.notificacion_id
+    assert len(uow.alertas_guardadas) == 2
+
+
+def test_detectada_con_alerta_vencida_sin_limpiar_registra_nueva(uow: FakeUnitOfWork, caplog):
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    primera = _registrar(servicio)
+    vieja = uow.alertas_guardadas[0]
+    uow.alertas_guardadas[0] = replace(vieja, expira_at=datetime.now(UTC) - timedelta(minutes=1))
+
+    nueva = _registrar(servicio)
+
+    assert nueva.resultado_log == "REGISTRADA"
+    assert uow.alertas_guardadas[0].motivo_resolucion == puertos.ResolucionAlerta.EXPIRACION
+    assert uow.alertas_guardadas[1].motivo_resolucion is None
+    assert (
+        f"Alerta STOCK_BAJO_INSUMO/INS-001 resuelta por EXPIRACION "
+        f"notificacion_id={primera.notificacion_id}" in caplog.text
+    )
+
+
+def test_ejecutar_ciclo_cierra_vencidas_y_registra_resumen(uow: FakeUnitOfWork, caplog):
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    for producto in ("A-1", "A-2", "A-3"):
+        _registrar(servicio, productoId=producto)
+    pasado = datetime.now(UTC) - timedelta(minutes=1)
+    for i in (0, 1):
+        uow.alertas_guardadas[i] = replace(uow.alertas_guardadas[i], expira_at=pasado)
+
+    resumen, errores = servicio.ejecutar_ciclo()
+
+    assert resumen == {"alertas": 2}
+    assert errores == []
+    assert uow.alertas_guardadas[2].motivo_resolucion is None
+    assert "Limpieza de alertas completada: 2 alertas expiradas" in caplog.text
+    assert "Alerta STOCK_BAJO_INSUMO/A-1 resuelta por EXPIRACION" in caplog.text
+
+
+def test_ejecutar_ciclo_continua_si_una_tarea_falla(uow: FakeUnitOfWork, caplog):
+    servicio = ServicioNotificaciones(lambda: uow)
+    uow.fallar_en_commit = RuntimeError("falla simulada")
+
+    resumen, errores = servicio.ejecutar_ciclo()
+
+    assert resumen == {}
+    assert errores == ["alertas"]
+    assert "Falló la tarea del ciclo: alertas" in caplog.text
+
+
+def test_ejecutar_ciclo_una_tarea_que_falla_no_detiene_a_las_demas(
+    uow: FakeUnitOfWork, caplog, monkeypatch
+):
+    servicio = ServicioNotificaciones(lambda: uow)
+
+    def rota() -> int:
+        raise RuntimeError("falla simulada")
+
+    monkeypatch.setattr(servicio, "_tareas_ciclo", lambda: (("rota", rota), ("ok", lambda: 3)))
+
+    assert servicio.ejecutar_ciclo() == ({"ok": 3}, ["rota"])
+    assert "Falló la tarea del ciclo: rota" in caplog.text
+
+
+def test_concurrencia_con_ganador_ya_resuelto_reintenta_una_vez(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow)
+    uow.alerta_concurrente_al_hacer_commit = puertos.Alerta(
+        tipo="STOCK_BAJO_INSUMO",
+        clave="INS-001",
+        notificacion_id=UUID(int=1),
+        motivo_resolucion=puertos.ResolucionAlerta.EMISOR,
+        id=99,
+    )
+
+    res = _registrar(servicio)
+
+    assert res.resultado_log == "REGISTRADA"
