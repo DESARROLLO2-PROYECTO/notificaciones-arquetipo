@@ -31,12 +31,19 @@ El CD se detiene con un aviso si faltan `AMQP_URL`, `DOMINIO` o `CICLO_INTERVALO
 
 ## Antes del primer despliegue con HTTPS
 
-1. **Security group de la instancia**: reglas de entrada para TCP **80** y **443** desde
-   `0.0.0.0/0`. El 80 hace falta para que Let's Encrypt valide el dominio y para redirigir a HTTPS.
-   Cuando HTTPS funcione se puede **cerrar el 8090**: ya no se usa desde afuera.
-2. **IP fija**: el dominio `13-59-144-83.sslip.io` resuelve a esa IP. Si la instancia se detiene y
-   se inicia, una IP pública normal cambia. Una *Elastic IP* (gratis mientras esté asociada) la deja fija.
-3. Agregar al `.env` las variables nuevas de la tabla.
+1. **Security group** (`notif-sg`, `us-east-2`): ya tiene reglas de entrada para TCP **80** y
+   **443** desde `0.0.0.0/0`. El 80 hace falta para que Let's Encrypt valide el dominio y para
+   redirigir a HTTPS. Después del primer despliegue con HTTPS se puede **cerrar el 8090**: la API ya
+   solo escucha dentro del servidor.
+2. **IP fija**: el dominio `13-59-144-83.sslip.io` resuelve a esa IP, que hoy es una IP pública
+   normal: si la instancia se detiene y se inicia, cambia. Una *Elastic IP* la deja fija (cambia la
+   IP actual una sola vez: habría que actualizar `DOMINIO` y la URL del contrato).
+3. Variables nuevas en el `.env` (ya agregadas): `AMQP_URL`, `AMQP_TIMEOUT_S`, `CICLO_INTERVALO_S`
+   y `DOMINIO`.
+
+Se probó con un Caddy temporal frente a la API anterior: Let's Encrypt emitió el certificado
+de `13-59-144-83.sslip.io` (validez de 90 días, renovación automática) y
+`https://13-59-144-83.sslip.io/health` responde 200 con el certificado verificado.
 
 ## Después del despliegue
 
