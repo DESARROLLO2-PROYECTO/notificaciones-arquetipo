@@ -15,6 +15,10 @@ class NombreDuplicado(ErrorDominio):
     """409"""
 
 
+class ColaNoDisponible(ErrorDominio):
+    """El broker no confirmó el mensaje: la notificación queda pendiente de publicación."""
+
+
 class NoAutorizado(ErrorDominio):
     """403"""
 

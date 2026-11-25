@@ -137,3 +137,21 @@ class UnitOfWork(Protocol):
     ) -> None: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class MensajeNotificacion:
+    """Lo único que viaja por la cola: el worker lee el resto desde la base de datos."""
+
+    notificacion_id: UUID
+    tipo: str
+    destino: str
+
+
+class Publicador(Protocol):
+    def publicar(self, mensaje: MensajeNotificacion) -> None:
+        """Publica el mensaje en la cola de su destino.
+
+        Lanza ColaNoDisponible si el broker no lo confirma.
+        """
+        ...
