@@ -77,7 +77,7 @@ def crear_notificacion(
         response.status_code = status.HTTP_200_OK
         return MensajeResponse(mensaje="No había una alerta activa")
 
-    if resultado.resultado_log == "RESUELTA":
+    if resultado.resultado_log == "ALERTA_CERRADA":
         response.status_code = status.HTTP_200_OK
         return MensajeResponse(mensaje="Alerta resuelta correctamente")
 

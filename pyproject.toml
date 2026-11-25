@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Arquetipo mínimo transaccional: Equipo (Desarrollo II)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "aio-pika>=10.2.3",
     "alembic>=1.20.1",
     "fastapi>=0.162.0",
     "psycopg[binary]>=3.3.6",

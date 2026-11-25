@@ -1,6 +1,8 @@
 """Bootstrap: crea FastAPI, registra routers y manejadores de error. Swagger en /docs."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +18,7 @@ from app.domain.errores import (
     NombreDuplicado,
     TipoNotificacionInvalido,
 )
+from app.infrastructure.broker import cerrar_publicador, precalentar_publicador
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +93,14 @@ def create_app() -> FastAPI:
     logging.basicConfig(
         level=get_settings().log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
-    app = FastAPI(title="Notificaciones", version="0.1.0")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        precalentar_publicador()
+        yield
+        cerrar_publicador()  # no hace nada si la cola nunca se usó
+
+    app = FastAPI(title="Notificaciones", version="0.1.0", lifespan=lifespan)
     app.add_exception_handler(ErrorDominio, _error_dominio)
     app.add_exception_handler(NoEncontrado, _error_dominio)
     app.add_exception_handler(NombreDuplicado, _error_dominio)
