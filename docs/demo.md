@@ -1,5 +1,7 @@
 # Demo con equipos falsos
 
+> Para el sprint review por criterios de aceptación (HU-NOT-01 y HU-NOT-11), ver [demo_criterios.md](demo_criterios.md).
+
 `python -m scripts.demo` hace que **Inventario** y **Fabricación** (falsos) le pidan notificaciones
 al módulo, tal como lo harían sus APIs reales, y va contando en pantalla qué pasa y por qué. Cada
 escena se comprueba sola: al final muestra un resumen con ✓ o ✗.

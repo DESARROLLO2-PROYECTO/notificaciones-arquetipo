@@ -43,10 +43,11 @@ def leer_archivo(ruta: Path) -> dict[str, str]:
     return valores
 
 
-def crear_parser() -> argparse.ArgumentParser:
+def crear_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m scripts.demo",
         description="Demo: equipos falsos le piden notificaciones al módulo de Notificaciones.",
+        add_help=add_help,
     )
     parser.add_argument(
         "--url", help=f"Dirección de la API (variable DEMO_URL; por defecto {URL_POR_DEFECTO})"
@@ -80,6 +81,15 @@ def cargar(
     Prioridad: argumento, variable de entorno, archivo `.demo.env`.
     """
     args = crear_parser().parse_args(argv)
+    return configuracion_de(args, entorno, archivo), args.preparar
+
+
+def configuracion_de(
+    args: argparse.Namespace,
+    entorno: Mapping[str, str] | None = None,
+    archivo: Path | None = None,
+) -> Configuracion:
+    """Arma la configuración desde los argumentos ya leídos, el entorno y `.demo.env`."""
     entorno = os.environ if entorno is None else entorno
     guardado = leer_archivo(ARCHIVO_LLAVES if archivo is None else archivo)
 
@@ -97,7 +107,7 @@ def cargar(
         broker_caido=args.broker_caido,
         espera_reintento_s=args.espera_reintento,
     )
-    return config, args.preparar
+    return config
 
 
 def _compose(raiz: Path, *args: str) -> str | None:
