@@ -80,6 +80,16 @@ class ApiKeyRepo:
         )
         return actualizado is not None
 
+    def listar(self) -> list[puertos.ResumenApiKey]:
+        filas = self._s.execute(
+            select(
+                m.ApiKey.id, m.Equipo.nombre, m.ApiKey.prefijo, m.ApiKey.activa, m.ApiKey.creada_at
+            )
+            .join(m.Equipo, m.ApiKey.equipo_id == m.Equipo.id)
+            .order_by(m.ApiKey.id)
+        ).all()
+        return [puertos.ResumenApiKey(*fila) for fila in filas]
+
     def obtener_por_hash(self, hash_llave: str) -> tuple[int, str, bool] | None:
         """Devuelve el equipo, el rol y el estado de la llave identificada por el hash."""
         registro = self._s.execute(

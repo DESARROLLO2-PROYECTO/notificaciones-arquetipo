@@ -89,3 +89,18 @@ def test_argumentos_invalidos(args):
     with pytest.raises(SystemExit) as exc:
         api_keys.main(args)
     assert exc.value.code == 2
+
+
+def test_listar_muestra_id_rol_prefijo_y_estado_sin_el_valor_de_la_llave(servicio, capsys):
+    from app.domain.puertos import ResumenApiKey
+
+    servicio.listar.return_value = [
+        ResumenApiKey(1, "inventario", "89282489", True, datetime(2026, 11, 25, tzinfo=UTC)),
+        ResumenApiKey(2, "fabricacion", "37c18a02", False, datetime(2026, 11, 25, tzinfo=UTC)),
+    ]
+
+    assert api_keys.main(["listar"]) == 0
+
+    salida = capsys.readouterr().out
+    assert "inventario" in salida and "89282489" in salida and "activa" in salida
+    assert "inactiva" in salida and "fabricacion" in salida

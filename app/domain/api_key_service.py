@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.domain.errores import ErrorDominio, NoEncontrado
-from app.domain.puertos import ApiKeyRepository, NuevaApiKey
+from app.domain.puertos import ApiKeyRepository, NuevaApiKey, ResumenApiKey
 
 ROLES = ("inventario", "fabricacion", "notificaciones")
 
@@ -55,3 +55,7 @@ class ApiKeyService:
     def desactivar(self, id: int) -> None:
         if not self._repo.desactivar(id):
             raise NoEncontrado("API Key no encontrada")
+
+    def listar(self) -> list[ResumenApiKey]:
+        """Las llaves con su identificador, rol y estado (para elegir cuál desactivar)."""
+        return self._repo.listar()

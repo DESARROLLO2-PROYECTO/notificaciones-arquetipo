@@ -28,6 +28,17 @@ class NuevaApiKey:
     creada_at: datetime
 
 
+@dataclass(frozen=True)
+class ResumenApiKey:
+    """Lo que se puede ver de una llave: nunca su valor, solo con qué identificarla."""
+
+    id: int
+    rol: str
+    prefijo: str  # primeros 8 caracteres de su hash
+    activa: bool
+    creada_at: datetime
+
+
 class ApiKeyRepository(Protocol):
     def bloquear_equipo(self, rol: str) -> int:
         """Bloquea el equipo hasta terminar la transacción de generación."""
@@ -40,6 +51,8 @@ class ApiKeyRepository(Protocol):
     def desactivar(self, id: int) -> bool:
         """Devuelve False si no existe; desactivar otra vez es idempotente."""
         ...
+
+    def listar(self) -> list[ResumenApiKey]: ...
 
 
 @dataclass(frozen=True)
