@@ -19,6 +19,7 @@ from app.domain.puertos import MAX_INTENTOS_PUBLICACION, MensajeNotificacion, Re
 logger = logging.getLogger("notificaciones")
 
 _EVENTOS_RESOLUCION = ("REPUESTO", "RESUELTA")
+CLAVE_UNICA = "-"  # clave de la alerta de los tipos sin campo clave
 _LOTE_PUBLICACION = 50  # por ciclo; el resto espera al siguiente
 
 
@@ -67,7 +68,7 @@ class ServicioNotificaciones:
                         f"Tipo '{tipo_codigo}' fuera del catálogo o inactivo."
                     ) from None
                 destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
-                clave = str(datos[tipo_notif.campo_clave])
+                clave = self._clave_de_alerta(tipo_notif, datos)
                 alerta = uow.alertas.obtener_activa(tipo_codigo, clave, ahora)
                 if alerta is None:
                     # El ganador ya se resolvió (REPUESTO concurrente): un único reintento.
@@ -103,7 +104,7 @@ class ServicioNotificaciones:
                 )
 
             destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
-            clave = str(datos[tipo_notif.campo_clave])
+            clave = self._clave_de_alerta(tipo_notif, datos)
             if tipo_notif.equipo_emisor_id is not None and (
                 tipo_notif.equipo_emisor_id != equipo_emisor_id
             ):
@@ -145,11 +146,7 @@ class ServicioNotificaciones:
                 )
             )
 
-            expira_at = (
-                ahora + timedelta(minutes=tipo_notif.ttl_alerta_min)
-                if tipo_notif.ttl_alerta_min > 0
-                else None
-            )
+            expira_at = ahora + timedelta(minutes=tipo_notif.ttl_alerta_min)
             uow.alertas.crear(
                 puertos.Alerta(
                     tipo=tipo_notif.codigo,
@@ -291,6 +288,13 @@ class ServicioNotificaciones:
             motivo.name,
             alerta.notificacion_id,
         )
+
+    @staticmethod
+    def _clave_de_alerta(tipo: puertos.TipoNotificacion, datos: dict[str, Any]) -> str:
+        """Valor del campo clave del tipo; sin campo clave, el tipo tiene una sola alerta."""
+        if tipo.campo_clave is None:
+            return CLAVE_UNICA
+        return str(datos[tipo.campo_clave])
 
     def _armar_mensaje(self, tipo: str, datos: dict[str, Any]) -> str:
         if tipo == "CONDICION_URGENTE":

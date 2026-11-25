@@ -3,11 +3,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
+from app.api.contrato import respuestas
 from app.api.deps import ServicioNotificacionesDep
 from app.api.schemas import (
     CicloResponse,
     CrearNotificacionBody,
-    ErrorValidacionResponse,
     MensajeResponse,
     NotificacionCreadaResponse,
     NotificacionDuplicadaResponse,
@@ -18,11 +18,7 @@ from app.security.api_key import exigir_api_key
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/notificaciones",
-    tags=["notificaciones"],
-    responses={401: {"description": "Acceso denegado"}},
-)
+router = APIRouter(prefix="/notificaciones")
 
 
 def _log_403(request: Request, motivo: str, rol: str | None) -> None:
@@ -38,23 +34,63 @@ def _log_403(request: Request, motivo: str, rol: str | None) -> None:
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
+    tags=["notificaciones"],
     summary="Registrar o resolver una notificación de stock bajo o condición urgente",
     description=(
-        "DETECTADA registra la notificación y activa la alerta del artículo (stock bajo, "
-        "`productoId`) o de la condición (`CONDICION_URGENTE`, `codigoCondicion` y "
-        "`descripcion`, solo API Key de fabricación); si ya hay una alerta activa responde 200 "
-        "con el id original. REPUESTO o RESUELTA, con los mismos datos de la activación, "
-        "resuelve la alerta activa (motivo EMISOR) y responde 200 aunque no hubiera alerta "
-        "activa."
+        "El emisor reporta un evento. Su llave debe ser del rol que emite el tipo: inventario "
+        "para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO (`productoId`, `nombre`, `stockActual`, "
+        "`stockMinimo`) y fabricacion para CONDICION_URGENTE (`codigoCondicion`, "
+        "`descripcion`).\n\n"
+        "- **DETECTADA**: registra la notificación y activa la alerta (`201`). Si ya hay una "
+        "alerta activa para ese tipo y clave (`productoId` o `codigoCondicion`), no crea otra: "
+        "responde `200` con el id original y `duplicada: true`. La alerta vence a las 24 h en "
+        "stock bajo y a los 60 min en condición urgente; el reenvío no renueva ese plazo.\n"
+        "- **REPUESTO** o **RESUELTA**, con los mismos datos de la activación: resuelve la "
+        "alerta activa (`200`, «Alerta resuelta correctamente»). Sin alerta activa no cambia "
+        "nada (`200`, «No había una alerta activa»). Un nuevo DETECTADA vuelve a notificar.\n\n"
+        "La notificación se publica en la cola del destino después de registrarla; si la cola "
+        "no está disponible, la respuesta sigue siendo `201` y se reintenta en el ciclo."
     ),
     responses={
         200: {
             "model": NotificacionDuplicadaResponse | MensajeResponse,
-            "description": "Alerta ya activa (DETECTADA) o resultado de la resolución",
+            "description": "Alerta ya activa (DETECTADA repetido) o resultado de una resolución",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "duplicada": {
+                            "summary": "DETECTADA con alerta activa",
+                            "value": {
+                                "id": "0b6f1c7e-5f4e-4d62-9c1a-3f6d0f2f9a11",
+                                "duplicada": True,
+                                "mensaje": "Ya existe una alerta activa para este artículo",
+                            },
+                        },
+                        "resuelta": {
+                            "summary": "REPUESTO o RESUELTA con alerta activa",
+                            "value": {"mensaje": "Alerta resuelta correctamente"},
+                        },
+                        "sinAlerta": {
+                            "summary": "REPUESTO o RESUELTA sin alerta activa",
+                            "value": {"mensaje": "No había una alerta activa"},
+                        },
+                    }
+                }
+            },
         },
-        201: {"model": NotificacionCreadaResponse},
-        403: {"description": "Acceso denegado: el tipo pertenece a otro equipo emisor"},
-        422: {"model": ErrorValidacionResponse},
+        201: {
+            "model": NotificacionCreadaResponse,
+            "description": "Notificación registrada y alerta activada",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "0b6f1c7e-5f4e-4d62-9c1a-3f6d0f2f9a11",
+                        "mensaje": "Notificación registrada correctamente",
+                    }
+                }
+            },
+        },
+        **respuestas(401, 403, 422, 500),
     },
 )
 def crear_notificacion(
@@ -104,6 +140,7 @@ def crear_notificacion(
 
 @router.post(
     "/ciclo",
+    tags=["administración"],
     summary="Ejecutar el ciclo de notificaciones",
     description=(
         "Corre las tareas periódicas: cierra con motivo EXPIRACION las alertas vencidas y "
@@ -114,7 +151,17 @@ def crear_notificacion(
     ),
     response_model=CicloResponse,
     response_model_by_alias=True,
-    responses={403: {"description": "Acceso denegado: la llave no es del rol `notificaciones`"}},
+    responses={
+        200: {
+            "description": "Resumen del ciclo",
+            "content": {
+                "application/json": {
+                    "example": {"alertasCerradas": 2, "publicadas": 1, "errores": []}
+                }
+            },
+        },
+        **respuestas(401, 403, 500),
+    },
 )
 def ejecutar_ciclo(
     request: Request,

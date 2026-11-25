@@ -10,7 +10,7 @@ registra otra notificación.
 
 | Tarea | Trabajo | Evidencia |
 |---|---|---|
-| TS-02-01 | Guardar la fecha de resolución | Migración `0005`, `Alerta.resuelta_at` en el modelo y en `puertos.Alerta` |
+| TS-02-01 | Guardar la fecha de resolución | Migración `0005`, `Alerta.cerrada_at` en el modelo y en `puertos.Alerta` |
 | TS-02-02 | Resolver por evento del emisor | `ServicioNotificaciones._resolver_alerta`; `AlertaRepo.resolver` |
 | TS-02-03 | Expirar alertas vencidas | `AlertaRepo.expirar_vencidas`: un solo `UPDATE ... RETURNING` |
 | TS-02-04 | Ciclo de limpieza | `ServicioNotificaciones.ejecutar_ciclo` y `POST /notificaciones/ciclo` |
@@ -20,13 +20,13 @@ registra otra notificación.
 
 | Criterio del backlog | Comportamiento implementado |
 |---|---|
-| 1. Resolución por el emisor | `REPUESTO`/`RESUELTA` con alerta activa: motivo `emisor`, `resuelta_at` en UTC, notificación original intacta. HTTP 200 `Alerta resuelta correctamente`. |
+| 1. Resolución por el emisor | `REPUESTO`/`RESUELTA` con alerta activa: motivo `EMISOR`, `cerrada_at` en UTC, notificación original intacta. HTTP 200 `Alerta resuelta correctamente`. |
 | 2. Sin alerta activa | No cambia datos. HTTP 200 `No había una alerta activa`. |
 | 3. Nueva detección tras resolver | Sin alerta activa, `DETECTADA` registra una notificación nueva (201). |
 | 4. Vencimiento por tipo | `expira_at` se calcula al crear con `ttl_alerta_min` del tipo (1440 sembrado); reenviar no lo renueva. |
-| 5. Vencida sin limpiar | `DETECTADA` marca antes `expiracion` la vencida del mismo tipo y clave y registra la nueva en la misma transacción (el índice único parcial solo admite una activa). |
+| 5. Vencida sin limpiar | `DETECTADA` marca antes `EXPIRACION` la vencida del mismo tipo y clave y registra la nueva en la misma transacción (el índice único parcial solo admite una activa). |
 | 6. Ciclo | `POST /notificaciones/ciclo` solo con llave del rol `notificaciones` (otro rol: 403; sin llave: 401). Cierra las vencidas y registra `Limpieza de alertas completada: N alertas expiradas`. Cada tarea del ciclo se aísla: si una falla se registra y las demás siguen. |
-| 7. Ciclos simultáneos | El cierre es un único `UPDATE ... WHERE motivo_resolucion IS NULL AND expira_at <= ahora RETURNING`; ningún registro se procesa dos veces. Respuesta `{"alertasCerradas": N, "errores": []}`; `errores` lista las tareas que fallaron. |
+| 7. Ciclos simultáneos | El cierre es un único `UPDATE ... WHERE cerrada_at IS NULL AND expira_at <= ahora RETURNING`; ningún registro se procesa dos veces. Respuesta `{"alertasCerradas": N, "errores": []}`; `errores` lista las tareas que fallaron. |
 | 8. Cambio de TTL | Solo afecta a alertas nuevas: el vencimiento queda guardado en cada alerta. |
 | 9. Registro de la resolución | `Alerta <tipo>/<clave> resuelta por <EMISOR\|EXPIRACION> notificacion_id=<uuid>`. |
 

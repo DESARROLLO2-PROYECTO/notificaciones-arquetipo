@@ -9,7 +9,11 @@ import pytest
 
 from app.domain import puertos
 from app.domain.errores import ColaNoDisponible, NoAutorizado, TipoNotificacionInvalido
-from app.domain.notificacion_service import ErrorConcurrenciaAlerta, ServicioNotificaciones
+from app.domain.notificacion_service import (
+    CLAVE_UNICA,
+    ErrorConcurrenciaAlerta,
+    ServicioNotificaciones,
+)
 
 # --- Fakes en memoria (Ports & UnitOfWork) ---
 
@@ -55,7 +59,7 @@ class FakeNotificacionRepo:
         self._uow.notificaciones_guardadas[id] = replace(
             guardada,
             publicada_at=ahora,
-            proximo_intento_entrega=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
+            proximo_intento_entrega_at=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
         )
 
     def registrar_fallo_publicacion(self, id: UUID, error: str) -> int:
@@ -106,7 +110,7 @@ class FakeAlertaRepo:
         for i, alerta in enumerate(self._uow.alertas_guardadas):
             if alerta.id == id:
                 self._uow.alertas_guardadas[i] = replace(
-                    alerta, motivo_resolucion=motivo, resuelta_at=ahora
+                    alerta, motivo_resolucion=motivo, cerrada_at=ahora
                 )
 
     def expirar_vencidas(
@@ -122,7 +126,7 @@ class FakeAlertaRepo:
                 and clave in (None, alerta.clave)
             ):
                 cerrada = replace(
-                    alerta, motivo_resolucion=puertos.ResolucionAlerta.EXPIRACION, resuelta_at=ahora
+                    alerta, motivo_resolucion=puertos.ResolucionAlerta.EXPIRACION, cerrada_at=ahora
                 )
                 self._uow.alertas_guardadas[i] = cerrada
                 cerradas.append(cerrada)
@@ -223,7 +227,7 @@ def uow() -> FakeUnitOfWork:
     fake.tipos_fake.tipos["STOCK_BAJO_PRODUCTO"] = puertos.TipoNotificacion(
         codigo="STOCK_BAJO_PRODUCTO",
         campo_clave="productoId",
-        ttl_alerta_min=0,
+        ttl_alerta_min=30,
         activo=True,
         equipo_emisor_id=1,
         equipo_destino_id=2,
@@ -305,7 +309,7 @@ def test_registrar_notificacion_nueva_crea_notificacion_y_alerta(uow: FakeUnitOf
     )
 
 
-def test_registrar_con_ttl_cero_deja_expira_at_en_none(uow: FakeUnitOfWork):
+def test_toda_alerta_nueva_fija_expira_at_con_el_ttl_del_tipo(uow: FakeUnitOfWork):
     # Arrange
     servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     datos = _datos_stock(tipo="STOCK_BAJO_PRODUCTO", productoId="CAD-99")
@@ -317,7 +321,8 @@ def test_registrar_con_ttl_cero_deja_expira_at_en_none(uow: FakeUnitOfWork):
 
     # Assert
     assert res.destino == "fabricacion"
-    assert uow.alertas_guardadas[0].expira_at is None
+    alerta = uow.alertas_guardadas[0]
+    assert alerta.expira_at == alerta.creada_at + timedelta(minutes=30)
 
 
 def test_registrar_cuando_ya_existe_alerta_activa_devuelve_id_original(uow: FakeUnitOfWork, caplog):
@@ -610,7 +615,7 @@ def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplo
     assert res.notificacion_id == original.notificacion_id
     alerta = uow.alertas_guardadas[0]
     assert alerta.motivo_resolucion == puertos.ResolucionAlerta.EMISOR
-    assert alerta.resuelta_at is not None
+    assert alerta.cerrada_at is not None
     assert len(uow.notificaciones_guardadas) == 1
     assert (
         f"Alerta STOCK_BAJO_INSUMO/INS-001 resuelta por EMISOR "
@@ -758,7 +763,7 @@ def test_registrar_nueva_publica_y_marca_publicada(uow: FakeUnitOfWork, caplog):
     n = uow.notificaciones_guardadas[res.notificacion_id]
     assert n.publicada_at is not None
     assert n.publicada_at.tzinfo is not None
-    assert n.proximo_intento_entrega == n.publicada_at + timedelta(minutes=5)
+    assert n.proximo_intento_entrega_at == n.publicada_at + timedelta(minutes=5)
     assert f"Notificación {res.notificacion_id} publicada correctamente" in caplog.text
 
 
@@ -957,3 +962,27 @@ def test_armar_mensaje_condicion_urgente_se_trunca_a_200():
         len(servicio._armar_mensaje("CONDICION_URGENTE", {**datos, "descripcion": "x" * 300}))
         == 200
     )
+
+
+def test_un_tipo_sin_campo_clave_tiene_una_sola_alerta(uow: FakeUnitOfWork):
+    uow.tipos_fake.tipos["SIN_CLAVE"] = puertos.TipoNotificacion(
+        codigo="SIN_CLAVE",
+        campo_clave=None,
+        ttl_alerta_min=60,
+        activo=True,
+        equipo_emisor_id=1,
+        equipo_destino_id=1,
+    )
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
+
+    primera = servicio.registrar_notificacion(
+        "SIN_CLAVE", "DETECTADA", _datos_stock(productoId="A-1"), equipo_emisor_id=1
+    )
+    segunda = servicio.registrar_notificacion(
+        "SIN_CLAVE", "DETECTADA", _datos_stock(productoId="B-2"), equipo_emisor_id=1
+    )
+
+    assert primera.clave == CLAVE_UNICA
+    assert segunda.duplicada is True
+    assert segunda.notificacion_id == primera.notificacion_id
+    assert len(uow.alertas_guardadas) == 1

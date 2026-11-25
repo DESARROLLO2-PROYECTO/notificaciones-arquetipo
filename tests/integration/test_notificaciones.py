@@ -1,6 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -60,10 +60,10 @@ def _setup_db(_postgres):
             text(
                 """
                 INSERT INTO tipos_notificacion
-                    (codigo, campo_clave, ttl_alerta_min, activo, 
+                    (codigo, schema, campo_clave, ttl_alerta_min, activo,
                     equipo_emisor_id, equipo_destino_id)
                 VALUES
-                    ('TIPO_INACTIVO_TEST', 'productoId', 60, false, :inv, :inv)
+                    ('TIPO_INACTIVO_TEST', '[]', 'productoId', 60, false, :inv, :inv)
                 ON CONFLICT (codigo) DO UPDATE SET
                     equipo_emisor_id = EXCLUDED.equipo_emisor_id,
                     equipo_destino_id = EXCLUDED.equipo_destino_id,
@@ -369,18 +369,40 @@ def test_colision_de_alerta_activa_en_flush_se_traduce_a_error_de_concurrencia(_
     from app.infrastructure.repositories import AlertaRepo, NotificacionRepo
 
     clave = f"COL-{uuid4().hex[:10]}"
+    (inventario,) = _sql("SELECT id FROM equipos WHERE nombre = 'inventario'")[0]
+    vence = datetime.now(UTC) + timedelta(hours=1)
+
+    def nueva(notificaciones):
+        return notificaciones.crear(
+            puertos.Notificacion(
+                tipo="STOCK_BAJO_INSUMO",
+                equipo_emisor_id=inventario,
+                equipo_destino_id=inventario,
+                payload={},
+            )
+        )
+
     with Session(get_engine()) as session:
         notificaciones = NotificacionRepo(session)
         alertas = AlertaRepo(session)
-        primera = notificaciones.crear(puertos.Notificacion(tipo="STOCK_BAJO_INSUMO"))
-        segunda = notificaciones.crear(puertos.Notificacion(tipo="STOCK_BAJO_INSUMO"))
+        primera, segunda = nueva(notificaciones), nueva(notificaciones)
         alertas.crear(
-            puertos.Alerta(tipo="STOCK_BAJO_INSUMO", clave=clave, notificacion_id=primera.id)
+            puertos.Alerta(
+                tipo="STOCK_BAJO_INSUMO",
+                clave=clave,
+                notificacion_id=primera.id,
+                expira_at=vence,
+            )
         )
 
         with pytest.raises(ErrorConcurrenciaAlerta):
             alertas.crear(
-                puertos.Alerta(tipo="STOCK_BAJO_INSUMO", clave=clave, notificacion_id=segunda.id)
+                puertos.Alerta(
+                    tipo="STOCK_BAJO_INSUMO",
+                    clave=clave,
+                    notificacion_id=segunda.id,
+                    expira_at=vence,
+                )
             )
         session.rollback()
 
@@ -402,7 +424,7 @@ def _sql(sentencia: str, **params):
 def _vencer(clave: str) -> None:
     _sql(
         "UPDATE alertas SET expira_at = now() - interval '1 minute' "
-        "WHERE clave = :clave AND motivo_resolucion IS NULL",
+        "WHERE clave = :clave AND cerrada_at IS NULL",
         clave=clave,
     )
 
@@ -421,10 +443,10 @@ def test_evento_de_resolucion_cierra_la_alerta_200(client, evento):
     assert r.status_code == 200
     assert r.json() == {"mensaje": "Alerta resuelta correctamente"}
     (fila,) = _sql(
-        "SELECT motivo_resolucion, resuelta_at FROM alertas WHERE notificacion_id = :id",
+        "SELECT motivo_resolucion, cerrada_at FROM alertas WHERE notificacion_id = :id",
         id=creada["id"],
     )
-    assert fila[0] == "emisor"
+    assert fila[0] == "EMISOR"
     assert fila[1] is not None
     assert _sql("SELECT count(*) FROM notificaciones WHERE id = :id", id=creada["id"]) == [(1,)]
 
@@ -474,13 +496,16 @@ def test_detectada_con_alerta_vencida_sin_limpiar_201(client):
         "SELECT motivo_resolucion FROM alertas WHERE clave = :c ORDER BY id",
         c=cuerpo["productoId"],
     )
-    assert motivos == [("expiracion",), (None,)]
+    assert motivos == [("EXPIRACION",), (None,)]
 
 
 def test_ciclo_cierra_las_vencidas_y_registra_el_resumen(client, caplog):
     caplog.set_level("INFO")
     # El ciclo cierra todas las vencidas: se vacía la tabla de las de otras pruebas
-    _sql("UPDATE alertas SET motivo_resolucion = 'emisor' WHERE motivo_resolucion IS NULL")
+    _sql(
+        "UPDATE alertas SET motivo_resolucion = 'EMISOR', cerrada_at = now() "
+        "WHERE cerrada_at IS NULL"
+    )
     claves = []
     for _ in range(3):
         cuerpo = _cuerpo()
@@ -543,7 +568,10 @@ def test_ciclo_sin_llave_401(client):
 def test_ciclos_simultaneos_no_cierran_dos_veces_la_misma_alerta(app, client):
     from fastapi.testclient import TestClient
 
-    _sql("UPDATE alertas SET motivo_resolucion = 'emisor' WHERE motivo_resolucion IS NULL")
+    _sql(
+        "UPDATE alertas SET motivo_resolucion = 'EMISOR', cerrada_at = now() "
+        "WHERE cerrada_at IS NULL"
+    )
     for _ in range(10):
         cuerpo = _cuerpo()
         _post(client, cuerpo)
@@ -569,9 +597,10 @@ def test_migracion_0005_agrega_y_quita_resuelta_at(_setup_db):
     try:
         command.downgrade(config, "0004_catalogo_tipos")
         assert "resuelta_at" not in {c["name"] for c in inspect(engine).get_columns("alertas")}
+        command.upgrade(config, "0005_resuelta_at_alertas")
+        assert "resuelta_at" in {c["name"] for c in inspect(engine).get_columns("alertas")}
     finally:
         command.upgrade(config, "head")
-    assert "resuelta_at" in {c["name"] for c in inspect(engine).get_columns("alertas")}
     engine.dispose()
 
 
@@ -601,7 +630,7 @@ def _leer_cola(url: str, destino: str) -> list[dict]:
 
 def _fila(id: str):
     return _sql(
-        "SELECT publicada_at, proximo_intento_entrega, intentos_publicacion, "
+        "SELECT publicada_at, proximo_intento_entrega_at, intentos_publicacion, "
         "ultimo_error_publicacion FROM notificaciones WHERE id = :id",
         id=id,
     )[0]
