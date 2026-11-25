@@ -228,6 +228,14 @@ def uow() -> FakeUnitOfWork:
         equipo_emisor_id=1,
         equipo_destino_id=2,
     )
+    fake.tipos_fake.tipos["CONDICION_URGENTE"] = puertos.TipoNotificacion(
+        codigo="CONDICION_URGENTE",
+        campo_clave="codigoCondicion",
+        ttl_alerta_min=60,
+        activo=True,
+        equipo_emisor_id=2,
+        equipo_destino_id=2,
+    )
     fake.tipos_fake.tipos["TIPO_INACTIVO"] = puertos.TipoNotificacion(
         codigo="TIPO_INACTIVO",
         campo_clave="productoId",
@@ -496,8 +504,7 @@ def _tipo_notif(equipo_destino_id: int | None = 2) -> puertos.TipoNotificacion:
 
 
 def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
-    """Cubre línea 53 (alerta is None tras ErrorConcurrenciaAlerta) y
-    línea 169 (tipo_notif is None en _resolver_destino)."""
+    """Cubre la rama alerta is None tras ErrorConcurrenciaAlerta."""
     uow_1 = MagicMock()
     uow_1.__enter__.return_value = uow_1
     uow_1.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=2)
@@ -515,9 +522,7 @@ def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
 
     uow_2 = MagicMock()
     uow_2.__enter__.return_value = uow_2
-    # En el segundo UoW, obtener_por_codigo devuelve None ->
-    # cubre línea 169 (_resolver_destino -> 'desconocido')
-    uow_2.tipos.obtener_por_codigo.return_value = None
+    uow_2.tipos.obtener_por_codigo.return_value = _tipo_notif()
     # obtener_activa sigue devolviendo None -> cubre línea 53 (raise)
     uow_2.alertas.obtener_activa.return_value = None
 
@@ -875,3 +880,56 @@ def test_ciclo_error_inesperado_en_una_fila_no_deshace_las_publicadas(uow: FakeU
     assert (n[1].publicada_at, n[1].intentos_publicacion) == (None, 2)
     assert n[1].ultimo_error_publicacion == "RuntimeError"
     assert "Error inesperado al publicar la notificación" in caplog.text
+
+
+# --- HU-NOT-05: condición urgente ---
+
+
+def _registrar_cu(servicio: ServicioNotificaciones, evento: str = "DETECTADA"):
+    datos = {
+        "tipo": "CONDICION_URGENTE",
+        "evento": evento,
+        "codigoCondicion": "TEMP-01",
+        "descripcion": "Horno caliente",
+    }
+    return servicio.registrar_notificacion("CONDICION_URGENTE", evento, datos, equipo_emisor_id=2)
+
+
+def test_condicion_urgente_usa_campo_clave_del_tipo(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
+
+    res = _registrar_cu(servicio)
+
+    assert res.resultado_log == "REGISTRADA"
+    assert res.clave == "TEMP-01"
+    assert res.destino == "fabricacion"
+    assert uow.alertas_guardadas[0].clave == "TEMP-01"
+    assert "mensaje" not in uow.notificaciones_guardadas[res.notificacion_id].payload
+
+
+def test_condicion_urgente_duplicada_y_resuelta(uow: FakeUnitOfWork):
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
+    primera = _registrar_cu(servicio)
+
+    duplicada = _registrar_cu(servicio)
+    cerrada = _registrar_cu(servicio, "RESUELTA")
+    nueva = _registrar_cu(servicio)
+
+    assert duplicada.duplicada is True
+    assert duplicada.notificacion_id == primera.notificacion_id
+    assert cerrada.resultado_log == "ALERTA_CERRADA"
+    assert nueva.resultado_log == "REGISTRADA"
+    assert nueva.notificacion_id != primera.notificacion_id
+
+
+def test_armar_mensaje_condicion_urgente_se_trunca_a_200():
+    servicio = ServicioNotificaciones(MagicMock(), FakePublicador())
+    datos = {"codigoCondicion": "TEMP-01", "descripcion": "x" * 100}
+
+    mensaje = servicio._armar_mensaje("CONDICION_URGENTE", datos)
+
+    assert mensaje == f"[CONDICION_URGENTE] TEMP-01: {'x' * 100}"
+    assert (
+        len(servicio._armar_mensaje("CONDICION_URGENTE", {**datos, "descripcion": "x" * 300}))
+        == 200
+    )

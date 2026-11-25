@@ -679,3 +679,127 @@ def test_ciclos_simultaneos_publican_cada_notificacion_una_vez(app, client, brok
 
     assert sum(publicadas) == 6
     assert sorted(m["id"] for m in _leer_cola(broker, "inventario")) == sorted(ids)
+
+
+# --- HU-NOT-05: condición urgente ---
+
+MENSAJE_CU_INVALIDA = "Información de la condición urgente incompleta o inválida"
+
+
+def _cu(**cambios) -> dict:
+    base = {
+        "tipo": "CONDICION_URGENTE",
+        "codigoCondicion": f"CU-{uuid4().hex[:10]}",
+        "descripcion": "Horno por encima de la temperatura máxima",
+    }
+    base.update(cambios)
+    return base
+
+
+def test_condicion_urgente_201_se_publica_en_la_cola_de_fabricacion(client, broker):
+    _leer_cola(broker, "fabricacion")  # vacía restos de otras pruebas
+    cuerpo = _cu()
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 201
+    id = r.json()["id"]
+    assert r.json()["mensaje"] == "Notificación registrada correctamente"
+    assert _leer_cola(broker, "fabricacion") == [{"id": id, "tipo": "CONDICION_URGENTE"}]
+    (fila,) = _sql(
+        "SELECT payload, creada_at FROM notificaciones WHERE id = :id",
+        id=id,
+    )
+    assert fila[0]["codigoCondicion"] == cuerpo["codigoCondicion"]
+    assert fila[0]["descripcion"] == cuerpo["descripcion"]
+    assert "mensaje" not in fila[0]
+
+
+def test_condicion_urgente_duplicada_200_con_id_original(client):
+    cuerpo = _cu()
+    creada = _post(client, cuerpo, rol="fabricacion").json()
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "id": creada["id"],
+        "duplicada": True,
+        "mensaje": "Ya existe una alerta activa para esta condición",
+    }
+
+
+def test_condicion_urgente_resuelta_y_nueva_detectada_201(client):
+    cuerpo = _cu()
+    primera = _post(client, cuerpo, rol="fabricacion").json()
+
+    resuelta = _post(client, {**cuerpo, "evento": "RESUELTA"}, rol="fabricacion")
+    nueva = _post(client, cuerpo, rol="fabricacion")
+
+    assert resuelta.status_code == 200
+    assert resuelta.json() == {"mensaje": "Alerta resuelta correctamente"}
+    assert nueva.status_code == 201
+    assert nueva.json()["id"] != primera["id"]
+
+
+@pytest.mark.parametrize(
+    ("cambios", "campo"),
+    [
+        ({"codigoCondicion": ""}, "codigoCondicion"),
+        ({"codigoCondicion": "A" * 31}, "codigoCondicion"),
+        ({"codigoCondicion": "TEMP 01"}, "codigoCondicion"),
+        ({"descripcion": ""}, "descripcion"),
+        ({"descripcion": "   "}, "descripcion"),
+        ({"descripcion": "x" * 101}, "descripcion"),
+    ],
+)
+def test_condicion_urgente_invalida_422(client, cambios, campo):
+    r = _post(client, _cu(**cambios), rol="fabricacion")
+
+    assert r.status_code == 422
+    assert r.json()["mensaje"] == MENSAJE_CU_INVALIDA
+    assert [e["campo"] for e in r.json()["errores"]] == [campo]
+
+
+@pytest.mark.parametrize("faltante", ["codigoCondicion", "descripcion"])
+def test_condicion_urgente_incompleta_422(client, faltante):
+    cuerpo = _cu()
+    del cuerpo[faltante]
+
+    r = _post(client, cuerpo, rol="fabricacion")
+
+    assert r.status_code == 422
+    assert r.json()["mensaje"] == MENSAJE_CU_INVALIDA
+    assert [e["campo"] for e in r.json()["errores"]] == [faltante]
+
+
+def test_condicion_urgente_con_llave_de_inventario_403(client):
+    r = _post(client, _cu(), rol="inventario")
+
+    assert r.status_code == 403
+
+
+def test_migracion_0006_siembra_condicion_urgente(_setup_db):
+    from alembic import command
+    from alembic.config import Config
+
+    consulta = (
+        "SELECT t.campo_clave, t.ttl_alerta_min, e.nombre, d.nombre, t.activo "
+        "FROM tipos_notificacion t "
+        "JOIN equipos e ON e.id = t.equipo_emisor_id "
+        "JOIN equipos d ON d.id = t.equipo_destino_id "
+        "WHERE t.codigo = 'CONDICION_URGENTE'"
+    )
+    assert [tuple(f) for f in _sql(consulta)] == [
+        ("codigoCondicion", 60, "fabricacion", "fabricacion", True)
+    ]
+    config = Config("alembic.ini")
+    # El downgrade no puede borrar un tipo con notificaciones registradas
+    _sql("DELETE FROM alertas WHERE tipo = 'CONDICION_URGENTE'")
+    _sql("DELETE FROM notificaciones WHERE tipo = 'CONDICION_URGENTE'")
+    try:
+        command.downgrade(config, "0005_resuelta_at_alertas")
+        assert _sql(consulta) == []
+    finally:
+        command.upgrade(config, "head")
+    assert len(_sql(consulta)) == 1
