@@ -99,3 +99,6 @@ def create_app() -> FastAPI:
     app.include_router(equipos.router)
     app.include_router(notificaciones.router)
     return app
+
+
+app = create_app()
