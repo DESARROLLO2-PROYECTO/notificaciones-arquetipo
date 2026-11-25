@@ -96,9 +96,10 @@ def test_precalentar_sin_amqp_url_no_hace_nada(monkeypatch):
 def test_el_arranque_de_la_api_sigue_si_el_broker_no_responde(monkeypatch, caplog):
     from fastapi.testclient import TestClient
 
+    # Antes de importar app.main: al importarlo se crea la app y se lee la configuración.
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://x:x@localhost/x")
     from app.main import create_app
 
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://x:x@localhost/x")
     _con_ajustes(monkeypatch, "amqp://test:clave-secreta@127.0.0.1:1/")
     caplog.set_level("INFO", logger="app.infrastructure.broker")
 
