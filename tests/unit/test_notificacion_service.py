@@ -539,6 +539,30 @@ def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
         )
 
 
+def test_concurrencia_con_tipo_desactivado_entre_intentos_lanza_tipo_invalido():
+    uow_1 = MagicMock()
+    uow_1.__enter__.return_value = uow_1
+    uow_1.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=2)
+    uow_1.equipos.obtener.return_value = puertos.Equipo(id=2, nombre="compras", es_admin=False)
+    uow_1.alertas.obtener_activa.return_value = None
+    uow_1.commit.side_effect = ErrorConcurrenciaAlerta("colision")
+
+    uow_2 = MagicMock()
+    uow_2.__enter__.return_value = uow_2
+    uow_2.tipos.obtener_por_codigo.return_value = None
+
+    uows = iter([uow_1, uow_2])
+    servicio = ServicioNotificaciones(lambda: next(uows), FakePublicador())
+
+    with pytest.raises(TipoNotificacionInvalido):
+        servicio.registrar_notificacion(
+            tipo_codigo="STOCK_BAJO_INSUMO",
+            evento="DETECTADA",
+            datos=_datos_base(),
+            equipo_emisor_id=1,
+        )
+
+
 def test_resolver_destino_sin_equipo_destino_o_equipo_inexistente():
     """Cubre línea 176 (equipo_destino_id is None -> 'desconocido') y rama equipo is None."""
     uow = MagicMock()
