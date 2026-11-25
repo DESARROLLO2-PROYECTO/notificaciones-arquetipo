@@ -5,7 +5,7 @@ Para los equipos de **Inventario** y **Fabricación** (y cualquiera que integre 
 - Contrato: [`openapi.json`](openapi.json) (OpenAPI 3.1). Se genera del código y una prueba falla si
   queda desactualizado: `uv run python -m scripts.exportar_openapi`.
 - Documentación interactiva: `/docs` (Swagger UI) y `/redoc` en el servidor.
-- Versión actual del contrato: **0.2.0**.
+- Versión actual del contrato: **0.3.0**.
 
 Impórtelo en Swagger Editor, Postman o Insomnia, o genere un cliente con `openapi-generator`.
 
@@ -66,9 +66,10 @@ El cuerpo trae `id`, `tipo`, `equipoEmisor`, `equipoDestino`, `fechaRegistro`, `
 | Endpoint | Historia | Estado |
 |---|---|---|
 | `POST /notificaciones` (stock bajo, resolver alertas) | HU-NOT-01, HU-NOT-02 | Disponible |
-| `POST /notificaciones/ciclo` (solo administración) | HU-NOT-02 | Disponible |
+| `POST /notificaciones` con `CONDICION_URGENTE` (llave de fabricacion) | HU-NOT-05 | Disponible |
+| Publicación en la cola del destino | HU-NOT-03 | Disponible (interna: no cambia la respuesta) |
+| `POST /notificaciones/ciclo` (solo administración) | HU-NOT-02, HU-NOT-03 | Disponible |
 | Webhook de entrega | HU-NOT-17 | Contrato publicado; entrega en el Sprint 3 |
-| `CONDICION_URGENTE` | HU-NOT-05 | Sprint 2 |
 | `GET /notificaciones/estado`, filtros, detalle y marcar leída | HU-NOT-07 a 10 | Sprints 2 y 3 |
 | Destinatarios y URL del callback | HU-NOT-13 a 16 | Sprints 2 y 3 |
 

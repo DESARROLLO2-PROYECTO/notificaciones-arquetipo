@@ -79,11 +79,13 @@ def test_toda_ruta_privada_declara_la_llave_y_sus_errores(contrato):
 
 
 def test_los_cuerpos_de_entrada_traen_ejemplos_y_campos_descritos(contrato):
-    esquemas = contrato["components"]["schemas"]
-    entrada = esquemas["CrearNotificacionRequest"]
+    entradas = {n: e for n, e in contrato["components"]["schemas"].items() if n.endswith("Request")}
 
-    assert len(entrada["examples"]) >= 2
-    assert all(campo.get("description") for campo in entrada["properties"].values())
+    assert {"CrearNotificacionRequest", "CondicionUrgenteRequest"} <= set(entradas)
+    for nombre, entrada in entradas.items():
+        assert len(entrada.get("examples", [])) >= 2, f"{nombre}: faltan ejemplos"
+        sin_descripcion = [c for c, v in entrada["properties"].items() if not v.get("description")]
+        assert not sin_descripcion, f"{nombre}: campos sin descripción {sin_descripcion}"
 
 
 def test_la_llave_se_declara_como_header_x_api_key(contrato):

@@ -1,7 +1,9 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from app.api.schemas import (
+    CondicionUrgenteRequest,
+    CrearNotificacionBody,
     CrearNotificacionRequest,
     EquipoIn,
     EquipoOut,
@@ -162,3 +164,63 @@ def test_notificacion_request_rechaza_formatos_y_rangos_invalidos(cambios):
 def test_validar_producto_id_rechaza_bool_directo(valor_bool):
     with pytest.raises(ValueError, match="productoId debe ser entero o texto alfanumérico"):
         CrearNotificacionRequest.validar_producto_id(valor_bool)
+
+
+# --- HU-NOT-05: condición urgente ---
+
+
+def _cu(**cambios) -> dict:
+    base = {
+        "tipo": "CONDICION_URGENTE",
+        "codigoCondicion": "TEMP-01",
+        "descripcion": "Horno caliente",
+    }
+    base.update(cambios)
+    return base
+
+
+def test_condicion_urgente_valida_con_evento_por_defecto():
+    req = TypeAdapter(CrearNotificacionBody).validate_python(_cu())
+
+    assert isinstance(req, CondicionUrgenteRequest)
+    assert req.evento == EventoNotificacion.DETECTADA
+
+
+def test_union_sigue_aceptando_stock():
+    req = TypeAdapter(CrearNotificacionBody).validate_python(_payload_valido())
+
+    assert isinstance(req, CrearNotificacionRequest)
+
+
+@pytest.mark.parametrize(
+    "cambios",
+    [
+        {"codigoCondicion": ""},
+        {"codigoCondicion": "A" * 31},
+        {"codigoCondicion": "TEMP 01"},
+        {"codigoCondicion": "TEMP_01"},
+        {"codigoCondicion": 5},
+        {"descripcion": ""},
+        {"descripcion": "   "},
+        {"descripcion": "x" * 101},
+        {"evento": "OTRO"},
+        {"extra": 1},
+    ],
+)
+def test_condicion_urgente_rechaza_invalidos(cambios):
+    with pytest.raises(ValidationError):
+        TypeAdapter(CrearNotificacionBody).validate_python(_cu(**cambios))
+
+
+@pytest.mark.parametrize("campo", ["codigoCondicion", "descripcion"])
+def test_condicion_urgente_rechaza_faltantes(campo):
+    cuerpo = _cu()
+    del cuerpo[campo]
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(CrearNotificacionBody).validate_python(cuerpo)
+
+
+def test_union_rechaza_tipo_desconocido():
+    with pytest.raises(ValidationError):
+        TypeAdapter(CrearNotificacionBody).validate_python(_cu(tipo="OTRO"))

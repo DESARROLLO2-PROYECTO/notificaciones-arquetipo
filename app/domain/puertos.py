@@ -1,7 +1,7 @@
 """Entidades y puertos del dominio. La infraestructura los implementa."""
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import TracebackType
 from typing import Any, Protocol
@@ -77,9 +77,29 @@ class Notificacion:
     payload: dict[str, Any] | list[str] | None = None
 
 
+MAX_INTENTOS_PUBLICACION = 3
+ESPERA_REINTENTO_PUBLICACION = timedelta(minutes=1)  # las nuevas las publica su propia solicitud
+ESPERA_PRIMERA_ENTREGA = timedelta(minutes=5)
+
+
 class NotificacionRepository(Protocol):
     def crear(self, notificacion: Notificacion) -> Notificacion: ...
     def obtener(self, id: UUID) -> Notificacion | None: ...
+
+    def marcar_publicada(self, id: UUID, ahora: datetime) -> None:
+        """Fija publicada_at y agenda el primer intento de entrega."""
+        ...
+
+    def registrar_fallo_publicacion(self, id: UUID, error: str) -> int:
+        """Suma un intento de forma atómica y devuelve el total."""
+        ...
+
+    def tomar_pendientes_publicacion(self, ahora: datetime, limite: int) -> list[Notificacion]:
+        """Sin publicar, con menos de 3 intentos y de más de 1 min, por orden de creación.
+
+        Bloquea las filas hasta terminar la transacción y se salta las ya bloqueadas.
+        """
+        ...
 
 
 """

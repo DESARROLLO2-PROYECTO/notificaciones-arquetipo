@@ -52,22 +52,27 @@ def _error_validacion(request: Request, e: Exception) -> JSONResponse:
     assert isinstance(e, RequestValidationError)
     errores = e.errors()
     en_cuerpo = any(x["loc"][0] == "body" for x in errores)
-    mensaje = (
-        "Los datos enviados no cumplen las reglas establecidas"
-        if en_cuerpo
-        else "Solicitud inválida: verifique los parámetros enviados"
-    )
+    cuerpo = e.body if isinstance(e.body, dict) else {}
+    if cuerpo.get("tipo") == "CONDICION_URGENTE":
+        mensaje = "Información de la condición urgente incompleta o inválida"
+    elif en_cuerpo:
+        mensaje = "Los datos enviados no cumplen las reglas establecidas"
+    else:
+        mensaje = "Solicitud inválida: verifique los parámetros enviados"
     campos = [{"campo": str(x["loc"][-1]), "error": x["msg"]} for x in errores]
     ruta = request.scope.get("route")
     ruta_path = getattr(ruta, "path", request.url.path)
 
     if request.method == "POST" and ruta_path == "/notificaciones":
-        cuerpo = e.body if isinstance(e.body, dict) else {}
+        # %r: tipo y clave llegan sin validar; así no se pueden inyectar líneas en el log
         log.warning(
-            "resultado=RECHAZADA tipo=%s destino=desconocido clave=%s "
+            "resultado=RECHAZADA tipo=%r destino=desconocido clave=%r "
             "notificacion_id=None campos=%s",
             cuerpo.get("tipo", "DESCONOCIDO"),
-            cuerpo.get("productoId", "None"),
+            cuerpo.get(
+                "codigoCondicion" if cuerpo.get("tipo") == "CONDICION_URGENTE" else "productoId",
+                "None",
+            ),
             [c["campo"] for c in campos],
         )
     else:

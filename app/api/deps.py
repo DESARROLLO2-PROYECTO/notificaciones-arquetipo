@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.domain.autenticacion_service import AutenticacionService
 from app.domain.equipo_service import EquipoService
 from app.domain.notificacion_service import ServicioNotificaciones
+from app.domain.puertos import MensajeNotificacion
+from app.infrastructure.broker import obtener_publicador
 from app.infrastructure.db import get_engine, transaccion
 from app.infrastructure.repositories import ApiKeyRepo, EquipoRepo, SqlAlchemyUnitOfWork
 
@@ -36,8 +38,17 @@ def get_autenticacion(session: SessionDep) -> AutenticacionService:
 AutenticacionDep = Annotated[AutenticacionService, Depends(get_autenticacion)]
 
 
+class _PublicadorPerezoso:
+    """Resuelve el publicador al publicar: sin AMQP_URL la API arranca y queda pendiente."""
+
+    def publicar(self, mensaje: MensajeNotificacion) -> None:
+        obtener_publicador().publicar(mensaje)
+
+
 def get_servicio_notificaciones() -> ServicioNotificaciones:
-    return ServicioNotificaciones(lambda: SqlAlchemyUnitOfWork(lambda: Session(get_engine())))
+    return ServicioNotificaciones(
+        lambda: SqlAlchemyUnitOfWork(lambda: Session(get_engine())), _PublicadorPerezoso()
+    )
 
 
 ServicioNotificacionesDep = Annotated[ServicioNotificaciones, Depends(get_servicio_notificaciones)]

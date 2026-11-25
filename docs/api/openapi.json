@@ -15,13 +15,70 @@
             },
             "title": "Errores",
             "type": "array"
+          },
+          "publicadas": {
+            "description": "Notificaciones pendientes que este ciclo publicó en la cola",
+            "title": "Publicadas",
+            "type": "integer"
           }
         },
         "required": [
           "alertasCerradas",
+          "publicadas",
           "errores"
         ],
         "title": "CicloResponse",
+        "type": "object"
+      },
+      "CondicionUrgenteRequest": {
+        "additionalProperties": false,
+        "description": "Condición urgente de Fabricación. REPUESTO y RESUELTA llevan los mismos datos.",
+        "examples": [
+          {
+            "codigoCondicion": "LINEA-2-PARADA",
+            "descripcion": "Línea 2 detenida por falla de motor",
+            "evento": "DETECTADA",
+            "tipo": "CONDICION_URGENTE"
+          },
+          {
+            "codigoCondicion": "LINEA-2-PARADA",
+            "descripcion": "Línea 2 detenida por falla de motor",
+            "evento": "RESUELTA",
+            "tipo": "CONDICION_URGENTE"
+          }
+        ],
+        "properties": {
+          "codigoCondicion": {
+            "description": "Código de la condición: 1 a 30 caracteres (letras, números y guion)",
+            "pattern": "^[A-Za-z0-9-]{1,30}$",
+            "title": "Codigocondicion",
+            "type": "string"
+          },
+          "descripcion": {
+            "description": "Qué ocurre, hasta 100",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Descripcion",
+            "type": "string"
+          },
+          "evento": {
+            "$ref": "#/components/schemas/EventoNotificacion",
+            "default": "DETECTADA",
+            "description": "DETECTADA activa la alerta; REPUESTO o RESUELTA la resuelven"
+          },
+          "tipo": {
+            "const": "CONDICION_URGENTE",
+            "description": "Solo la llave de fabricacion la emite",
+            "title": "Tipo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tipo",
+          "codigoCondicion",
+          "descripcion"
+        ],
+        "title": "CondicionUrgenteRequest",
         "type": "object"
       },
       "CrearNotificacionRequest": {
@@ -412,7 +469,7 @@
     },
     "description": "Módulo de **Notificaciones** del software de fabricación de Cutit Saws. Inventario y Fabricación\nle reportan eventos (por ejemplo, stock bajo) y el módulo los registra, evita duplicados, los\npublica en una cola interna y los entrega al equipo destino.\n\n## Autenticación\n\nToda solicitud (excepto `/health` y esta documentación) lleva la llave del equipo en el header\n`X-API-Key`. Cada llave tiene un rol (`inventario`, `fabricacion` o `notificaciones`) y solo puede\nemitir los tipos de su rol. Una llave enviada en la URL o en el cuerpo se ignora. Las llaves las\nentrega Notificaciones por un canal privado y se guardan solo como hash.\n\n## Convenciones\n\n- JSON en `camelCase`; fechas en UTC con formato ISO 8601.\n- Un evento `DETECTADA` repetido mientras la alerta sigue activa **no** crea otra notificación:\n  responde `200` con el id existente y `duplicada: true`. Es seguro reintentar.\n- Errores: `401` y `403` responden `{\"mensaje\": \"Acceso denegado\"}`; `422` lista los campos con\n  problema; `500` no expone detalles internos.\n- Los mensajes de error no cambian entre versiones menores: puede comparar contra ellos.\n\n## Entrega al equipo destino\n\nCada notificación se publica en una cola interna y se entrega por **webhook** a la URL que el\nequipo registre (ver `webhooks` y HU-NOT-16/17). Desde el Sprint 3 las entregas llevan firma\nHMAC; el receptor debe ignorar las repetidas usando `X-Notification-Id`.",
     "title": "API de Notificaciones",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -617,13 +674,21 @@
     },
     "/notificaciones": {
       "post": {
-        "description": "El emisor reporta un evento sobre un artículo. Su llave debe ser del rol que emite el tipo (inventario para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO).\n\n- **DETECTADA**: registra la notificación y activa la alerta del artículo (`201`). Si ya hay una alerta activa para ese tipo y `productoId`, no crea otra: responde `200` con el id original y `duplicada: true`. La alerta vence a las 24 h; el reenvío no renueva ese plazo.\n- **REPUESTO** o **RESUELTA**, con los mismos datos de la activación: resuelve la alerta activa (`200`, «Alerta resuelta correctamente»). Sin alerta activa no cambia nada (`200`, «No había una alerta activa»). Un nuevo DETECTADA vuelve a notificar.\n\nLa respuesta no espera la entrega al equipo destino.",
+        "description": "El emisor reporta un evento. Su llave debe ser del rol que emite el tipo: inventario para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO (`productoId`, `nombre`, `stockActual`, `stockMinimo`) y fabricacion para CONDICION_URGENTE (`codigoCondicion`, `descripcion`).\n\n- **DETECTADA**: registra la notificación y activa la alerta (`201`). Si ya hay una alerta activa para ese tipo y clave (`productoId` o `codigoCondicion`), no crea otra: responde `200` con el id original y `duplicada: true`. La alerta vence a las 24 h en stock bajo y a los 60 min en condición urgente; el reenvío no renueva ese plazo.\n- **REPUESTO** o **RESUELTA**, con los mismos datos de la activación: resuelve la alerta activa (`200`, «Alerta resuelta correctamente»). Sin alerta activa no cambia nada (`200`, «No había una alerta activa»). Un nuevo DETECTADA vuelve a notificar.\n\nLa notificación se publica en la cola del destino después de registrarla; si la cola no está disponible, la respuesta sigue siendo `201` y se reintenta en el ciclo.",
         "operationId": "crearNotificacion",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CrearNotificacionRequest"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CrearNotificacionRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CondicionUrgenteRequest"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -760,7 +825,7 @@
             "APIKeyHeader": []
           }
         ],
-        "summary": "Registrar o resolver una notificación de stock bajo",
+        "summary": "Registrar o resolver una notificación de stock bajo o condición urgente",
         "tags": [
           "notificaciones"
         ]
@@ -768,7 +833,7 @@
     },
     "/notificaciones/ciclo": {
       "post": {
-        "description": "Corre las tareas periódicas; hoy cierra con motivo EXPIRACION las alertas vencidas. Solo la API Key del rol `notificaciones`; pensado para invocarse de forma externa y periódica. Ciclos simultáneos nunca procesan la misma alerta dos veces.",
+        "description": "Corre las tareas periódicas: cierra con motivo EXPIRACION las alertas vencidas y publica en el broker las notificaciones pendientes (menos de 3 intentos, de más de 1 minuto) por orden de creación. Solo la API Key del rol `notificaciones`; pensado para invocarse de forma externa y periódica. Ciclos simultáneos nunca procesan la misma alerta dos veces.",
         "operationId": "ejecutarCiclo",
         "responses": {
           "200": {
@@ -776,7 +841,8 @@
               "application/json": {
                 "example": {
                   "alertasCerradas": 2,
-                  "errores": []
+                  "errores": [],
+                  "publicadas": 1
                 },
                 "schema": {
                   "$ref": "#/components/schemas/CicloResponse"

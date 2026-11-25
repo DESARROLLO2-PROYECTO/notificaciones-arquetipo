@@ -7,7 +7,7 @@ from app.api.contrato import respuestas
 from app.api.deps import ServicioNotificacionesDep
 from app.api.schemas import (
     CicloResponse,
-    CrearNotificacionRequest,
+    CrearNotificacionBody,
     MensajeResponse,
     NotificacionCreadaResponse,
     NotificacionDuplicadaResponse,
@@ -35,18 +35,21 @@ def _log_403(request: Request, motivo: str, rol: str | None) -> None:
     "",
     status_code=status.HTTP_201_CREATED,
     tags=["notificaciones"],
-    summary="Registrar o resolver una notificación de stock bajo",
+    summary="Registrar o resolver una notificación de stock bajo o condición urgente",
     description=(
-        "El emisor reporta un evento sobre un artículo. Su llave debe ser del rol que emite el "
-        "tipo (inventario para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO).\n\n"
-        "- **DETECTADA**: registra la notificación y activa la alerta del artículo (`201`). Si "
-        "ya hay una alerta activa para ese tipo y `productoId`, no crea otra: responde `200` "
-        "con el id original y `duplicada: true`. La alerta vence a las 24 h; el reenvío no "
-        "renueva ese plazo.\n"
+        "El emisor reporta un evento. Su llave debe ser del rol que emite el tipo: inventario "
+        "para STOCK_BAJO_INSUMO y STOCK_BAJO_PRODUCTO (`productoId`, `nombre`, `stockActual`, "
+        "`stockMinimo`) y fabricacion para CONDICION_URGENTE (`codigoCondicion`, "
+        "`descripcion`).\n\n"
+        "- **DETECTADA**: registra la notificación y activa la alerta (`201`). Si ya hay una "
+        "alerta activa para ese tipo y clave (`productoId` o `codigoCondicion`), no crea otra: "
+        "responde `200` con el id original y `duplicada: true`. La alerta vence a las 24 h en "
+        "stock bajo y a los 60 min en condición urgente; el reenvío no renueva ese plazo.\n"
         "- **REPUESTO** o **RESUELTA**, con los mismos datos de la activación: resuelve la "
         "alerta activa (`200`, «Alerta resuelta correctamente»). Sin alerta activa no cambia "
         "nada (`200`, «No había una alerta activa»). Un nuevo DETECTADA vuelve a notificar.\n\n"
-        "La respuesta no espera la entrega al equipo destino."
+        "La notificación se publica en la cola del destino después de registrarla; si la cola "
+        "no está disponible, la respuesta sigue siendo `201` y se reintenta en el ciclo."
     ),
     responses={
         200: {
@@ -92,7 +95,7 @@ def _log_403(request: Request, motivo: str, rol: str | None) -> None:
 )
 def crear_notificacion(
     request: Request,
-    body: CrearNotificacionRequest,
+    body: CrearNotificacionBody,
     response: Response,
     identidad: Annotated[Identidad, Depends(exigir_api_key)],
     servicio: ServicioNotificacionesDep,
@@ -121,7 +124,11 @@ def crear_notificacion(
         return NotificacionDuplicadaResponse(
             id=resultado.notificacion_id,
             duplicada=True,
-            mensaje="Ya existe una alerta activa para este artículo",
+            mensaje=(
+                "Ya existe una alerta activa para esta condición"
+                if body.tipo == "CONDICION_URGENTE"
+                else "Ya existe una alerta activa para este artículo"
+            ),
         )
 
     response.status_code = status.HTTP_201_CREATED
@@ -136,7 +143,9 @@ def crear_notificacion(
     tags=["administración"],
     summary="Ejecutar el ciclo de notificaciones",
     description=(
-        "Corre las tareas periódicas; hoy cierra con motivo EXPIRACION las alertas vencidas. "
+        "Corre las tareas periódicas: cierra con motivo EXPIRACION las alertas vencidas y "
+        "publica en el broker las notificaciones pendientes (menos de 3 intentos, de más de "
+        "1 minuto) por orden de creación. "
         "Solo la API Key del rol `notificaciones`; pensado para invocarse de forma externa "
         "y periódica. Ciclos simultáneos nunca procesan la misma alerta dos veces."
     ),
@@ -145,7 +154,11 @@ def crear_notificacion(
     responses={
         200: {
             "description": "Resumen del ciclo",
-            "content": {"application/json": {"example": {"alertasCerradas": 2, "errores": []}}},
+            "content": {
+                "application/json": {
+                    "example": {"alertasCerradas": 2, "publicadas": 1, "errores": []}
+                }
+            },
         },
         **respuestas(401, 403, 500),
     },
@@ -159,4 +172,8 @@ def ejecutar_ciclo(
         _log_403(request, "endpoint de administración", identidad.rol)
         raise NoAutorizado("endpoint de administración")
     resumen, errores = servicio.ejecutar_ciclo()
-    return CicloResponse(alertas_cerradas=resumen.get("alertas", 0), errores=errores)
+    return CicloResponse(
+        alertas_cerradas=resumen.get("alertas", 0),
+        publicadas=resumen.get("publicaciones", 0),
+        errores=errores,
+    )
