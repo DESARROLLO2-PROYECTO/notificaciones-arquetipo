@@ -33,7 +33,7 @@ def test_cada_destino_tiene_su_cola():
 def test_publicar_en_un_destino_sin_cola_falla_antes_de_conectar():
     publicador = broker.PublicadorAmqp("amqp://nadie@localhost:1/")
 
-    with pytest.raises(ValueError, match="notificaciones"):
+    with pytest.raises(ColaNoDisponible, match="Destino sin cola: notificaciones"):
         publicador.publicar(MensajeNotificacion(uuid4(), "STOCK_BAJO_INSUMO", "notificaciones"))
 
 

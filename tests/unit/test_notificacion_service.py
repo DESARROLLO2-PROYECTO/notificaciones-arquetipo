@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.domain import puertos
-from app.domain.errores import NoAutorizado, TipoNotificacionInvalido
+from app.domain.errores import ColaNoDisponible, NoAutorizado, TipoNotificacionInvalido
 from app.domain.notificacion_service import ErrorConcurrenciaAlerta, ServicioNotificaciones
 
 # --- Fakes en memoria (Ports & UnitOfWork) ---
@@ -49,6 +49,36 @@ class FakeNotificacionRepo:
 
     def obtener(self, id: UUID) -> puertos.Notificacion | None:
         return self._uow.notificaciones_guardadas.get(id)
+
+    def marcar_publicada(self, id: UUID, ahora: datetime) -> None:
+        guardada = self._uow.notificaciones_guardadas[id]
+        self._uow.notificaciones_guardadas[id] = replace(
+            guardada,
+            publicada_at=ahora,
+            proximo_intento_entrega=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
+        )
+
+    def registrar_fallo_publicacion(self, id: UUID, error: str) -> int:
+        guardada = self._uow.notificaciones_guardadas[id]
+        nueva = replace(
+            guardada,
+            intentos_publicacion=guardada.intentos_publicacion + 1,
+            ultimo_error_publicacion=error,
+        )
+        self._uow.notificaciones_guardadas[id] = nueva
+        return nueva.intentos_publicacion
+
+    def tomar_pendientes_publicacion(
+        self, ahora: datetime, limite: int
+    ) -> list[puertos.Notificacion]:
+        pendientes = [
+            n
+            for n in self._uow.notificaciones_guardadas.values()
+            if n.publicada_at is None
+            and n.intentos_publicacion < puertos.MAX_INTENTOS_PUBLICACION
+            and n.creada_at <= ahora - puertos.ESPERA_REINTENTO_PUBLICACION
+        ]
+        return sorted(pendientes, key=lambda n: n.creada_at)[:limite]
 
 
 class FakeAlertaRepo:
@@ -162,6 +192,17 @@ class FakeUnitOfWork:
         self.rollbacks += 1
 
 
+class FakePublicador:
+    def __init__(self) -> None:
+        self.publicados: list[puertos.MensajeNotificacion] = []
+        self.caido = False
+
+    def publicar(self, mensaje: puertos.MensajeNotificacion) -> None:
+        if self.caido:
+            raise ColaNoDisponible("No fue posible publicar en la cola")
+        self.publicados.append(mensaje)
+
+
 # --- Fixtures y helpers ---
 
 
@@ -217,7 +258,7 @@ def _datos_stock(**cambios) -> dict:
 def test_registrar_notificacion_nueva_crea_notificacion_y_alerta(uow: FakeUnitOfWork, caplog):
     # Arrange
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     datos = _datos_stock()
 
     # Act
@@ -231,7 +272,7 @@ def test_registrar_notificacion_nueva_crea_notificacion_y_alerta(uow: FakeUnitOf
     assert res.destino == "inventario"
     assert res.clave == "INS-001"
     assert res.resultado_log == "REGISTRADA"
-    assert uow.commits == 1
+    assert uow.commits == 2  # registro + marca de publicación
 
     # Notificación persistida sin 'mensaje' dentro del payload (Criterio 1)
     notif = uow.notificaciones_guardadas[res.notificacion_id]
@@ -258,7 +299,7 @@ def test_registrar_notificacion_nueva_crea_notificacion_y_alerta(uow: FakeUnitOf
 
 def test_registrar_con_ttl_cero_deja_expira_at_en_none(uow: FakeUnitOfWork):
     # Arrange
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     datos = _datos_stock(tipo="STOCK_BAJO_PRODUCTO", productoId="CAD-99")
 
     # Act
@@ -274,7 +315,7 @@ def test_registrar_con_ttl_cero_deja_expira_at_en_none(uow: FakeUnitOfWork):
 def test_registrar_cuando_ya_existe_alerta_activa_devuelve_id_original(uow: FakeUnitOfWork, caplog):
     # Arrange
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     datos = _datos_stock()
     primero = servicio.registrar_notificacion(
         "STOCK_BAJO_INSUMO", "DETECTADA", datos, equipo_emisor_id=1
@@ -291,13 +332,13 @@ def test_registrar_cuando_ya_existe_alerta_activa_devuelve_id_original(uow: Fake
     assert segundo.resultado_log == "ALERTA_YA_ACTIVA"
     assert len(uow.notificaciones_guardadas) == 1
     assert len(uow.alertas_guardadas) == 1
-    assert uow.commits == 1  # No hizo un segundo commit
+    assert uow.commits == 2  # sin un tercer commit: la duplicada no publica
     assert "resultado=ALERTA_YA_ACTIVA" in caplog.text
 
 
 def test_registrar_mismo_producto_distinto_tipo_crea_segunda_alerta(uow: FakeUnitOfWork):
     # Arrange
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
 
     # Act
     r1 = servicio.registrar_notificacion(
@@ -318,7 +359,7 @@ def test_registrar_mismo_producto_distinto_tipo_crea_segunda_alerta(uow: FakeUni
 
 def test_registrar_cuando_alerta_anterior_expiro_crea_nueva(uow: FakeUnitOfWork):
     # Arrange
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     pasado = datetime.now(UTC) - timedelta(hours=2)
     alerta_expirada = puertos.Alerta(
         id=1,
@@ -347,7 +388,7 @@ def test_registrar_tipo_invalido_o_inactivo_lanza_error_y_loggea_rechazo(
 ):
     # Arrange
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
 
     # Act / Assert
     with pytest.raises(TipoNotificacionInvalido):
@@ -369,7 +410,7 @@ def test_registrar_con_emisor_distinto_al_del_tipo_lanza_403_y_no_guarda(
 ):
     # Arrange: STOCK_BAJO_INSUMO lo emite el equipo 1 (inventario)
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
 
     # Act / Assert
     with pytest.raises(NoAutorizado, match="^Acceso denegado$") as error:
@@ -392,7 +433,7 @@ def test_concurrencia_simultanea_captura_colision_y_devuelve_alerta_ganadora(
 ):
     # Arrange (Criterio 6: otro hilo inserta la alerta justo antes de nuestro commit)
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     id_ganador = UUID("22222222-2222-2222-2222-222222222222")
     uow.alerta_concurrente_al_hacer_commit = puertos.Alerta(
         id=99,
@@ -418,7 +459,7 @@ def test_concurrencia_simultanea_captura_colision_y_devuelve_alerta_ganadora(
 
 def test_falla_interna_en_commit_hace_rollback_y_no_deja_datos_parciales(uow: FakeUnitOfWork):
     # Arrange (Criterio 7)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     uow.fallar_en_commit = RuntimeError("Conexión perdida con PostgreSQL")
 
     # Act / Assert
@@ -482,7 +523,7 @@ def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
 
     # El reintento único vuelve a chocar: el error sube
     uows = iter([uow_1, uow_2, uow_1])
-    servicio = ServicioNotificaciones(lambda: next(uows))
+    servicio = ServicioNotificaciones(lambda: next(uows), FakePublicador())
 
     with pytest.raises(ErrorConcurrenciaAlerta):
         servicio.registrar_notificacion(
@@ -508,7 +549,7 @@ def test_resolver_destino_sin_equipo_destino_o_equipo_inexistente():
         payload=_datos_base(),
     )
 
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     res = servicio.registrar_notificacion(
         tipo_codigo="STOCK_BAJO_INSUMO",
         evento="DETECTADA",
@@ -531,7 +572,7 @@ def _registrar(servicio: ServicioNotificaciones, evento: str = "DETECTADA", **ca
 @pytest.mark.parametrize("evento", ["REPUESTO", "RESUELTA"])
 def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplog, evento):
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     original = _registrar(servicio)
 
     res = _registrar(servicio, evento)
@@ -550,7 +591,7 @@ def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplo
 
 
 def test_evento_de_resolucion_sin_alerta_activa_no_escribe(uow: FakeUnitOfWork):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
 
     res = _registrar(servicio, "REPUESTO")
 
@@ -562,7 +603,7 @@ def test_evento_de_resolucion_sin_alerta_activa_no_escribe(uow: FakeUnitOfWork):
 
 
 def test_evento_de_resolucion_de_otro_emisor_es_no_autorizado(uow: FakeUnitOfWork):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     _registrar(servicio)
 
     with pytest.raises(NoAutorizado):
@@ -574,7 +615,7 @@ def test_evento_de_resolucion_de_otro_emisor_es_no_autorizado(uow: FakeUnitOfWor
 
 
 def test_detectada_tras_resolver_registra_nueva_notificacion(uow: FakeUnitOfWork):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     primera = _registrar(servicio)
     _registrar(servicio, "RESUELTA")
 
@@ -587,7 +628,7 @@ def test_detectada_tras_resolver_registra_nueva_notificacion(uow: FakeUnitOfWork
 
 def test_detectada_con_alerta_vencida_sin_limpiar_registra_nueva(uow: FakeUnitOfWork, caplog):
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     primera = _registrar(servicio)
     vieja = uow.alertas_guardadas[0]
     uow.alertas_guardadas[0] = replace(vieja, expira_at=datetime.now(UTC) - timedelta(minutes=1))
@@ -605,7 +646,7 @@ def test_detectada_con_alerta_vencida_sin_limpiar_registra_nueva(uow: FakeUnitOf
 
 def test_ejecutar_ciclo_cierra_vencidas_y_registra_resumen(uow: FakeUnitOfWork, caplog):
     caplog.set_level(logging.INFO)
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     for producto in ("A-1", "A-2", "A-3"):
         _registrar(servicio, productoId=producto)
     pasado = datetime.now(UTC) - timedelta(minutes=1)
@@ -614,7 +655,7 @@ def test_ejecutar_ciclo_cierra_vencidas_y_registra_resumen(uow: FakeUnitOfWork, 
 
     resumen, errores = servicio.ejecutar_ciclo()
 
-    assert resumen == {"alertas": 2}
+    assert resumen == {"alertas": 2, "publicaciones": 0}
     assert errores == []
     assert uow.alertas_guardadas[2].motivo_resolucion is None
     assert "Limpieza de alertas completada: 2 alertas expiradas" in caplog.text
@@ -622,12 +663,12 @@ def test_ejecutar_ciclo_cierra_vencidas_y_registra_resumen(uow: FakeUnitOfWork, 
 
 
 def test_ejecutar_ciclo_continua_si_una_tarea_falla(uow: FakeUnitOfWork, caplog):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     uow.fallar_en_commit = RuntimeError("falla simulada")
 
     resumen, errores = servicio.ejecutar_ciclo()
 
-    assert resumen == {}
+    assert resumen == {"publicaciones": 0}
     assert errores == ["alertas"]
     assert "Falló la tarea del ciclo: alertas" in caplog.text
 
@@ -635,7 +676,7 @@ def test_ejecutar_ciclo_continua_si_una_tarea_falla(uow: FakeUnitOfWork, caplog)
 def test_ejecutar_ciclo_una_tarea_que_falla_no_detiene_a_las_demas(
     uow: FakeUnitOfWork, caplog, monkeypatch
 ):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
 
     def rota() -> int:
         raise RuntimeError("falla simulada")
@@ -647,7 +688,7 @@ def test_ejecutar_ciclo_una_tarea_que_falla_no_detiene_a_las_demas(
 
 
 def test_concurrencia_con_ganador_ya_resuelto_reintenta_una_vez(uow: FakeUnitOfWork):
-    servicio = ServicioNotificaciones(lambda: uow)
+    servicio = ServicioNotificaciones(lambda: uow, FakePublicador())
     uow.alerta_concurrente_al_hacer_commit = puertos.Alerta(
         tipo="STOCK_BAJO_INSUMO",
         clave="INS-001",
@@ -659,3 +700,178 @@ def test_concurrencia_con_ganador_ya_resuelto_reintenta_una_vez(uow: FakeUnitOfW
     res = _registrar(servicio)
 
     assert res.resultado_log == "REGISTRADA"
+
+
+# --- HU-NOT-03: publicar en el broker ---
+
+
+def _servicio_con(uow: FakeUnitOfWork) -> tuple[ServicioNotificaciones, FakePublicador]:
+    publicador = FakePublicador()
+    return ServicioNotificaciones(lambda: uow, publicador), publicador
+
+
+def _envejecer(uow: FakeUnitOfWork, id: UUID, minutos: int) -> None:
+    n = uow.notificaciones_guardadas[id]
+    uow.notificaciones_guardadas[id] = replace(
+        n, creada_at=datetime.now(UTC) - timedelta(minutes=minutos)
+    )
+
+
+def test_registrar_nueva_publica_y_marca_publicada(uow: FakeUnitOfWork, caplog):
+    caplog.set_level(logging.INFO)
+    servicio, publicador = _servicio_con(uow)
+
+    res = _registrar(servicio)
+
+    assert publicador.publicados == [
+        puertos.MensajeNotificacion(res.notificacion_id, "STOCK_BAJO_INSUMO", "inventario")
+    ]
+    n = uow.notificaciones_guardadas[res.notificacion_id]
+    assert n.publicada_at is not None
+    assert n.publicada_at.tzinfo is not None
+    assert n.proximo_intento_entrega == n.publicada_at + timedelta(minutes=5)
+    assert f"Notificación {res.notificacion_id} publicada correctamente" in caplog.text
+
+
+def test_registrar_con_cola_caida_queda_pendiente_y_responde_igual(uow: FakeUnitOfWork, caplog):
+    caplog.set_level(logging.INFO)
+    servicio, publicador = _servicio_con(uow)
+    publicador.caido = True
+
+    res = _registrar(servicio)
+
+    n = uow.notificaciones_guardadas[res.notificacion_id]
+    assert res.resultado_log == "REGISTRADA"
+    assert n.publicada_at is None
+    assert n.intentos_publicacion == 1
+    assert n.ultimo_error_publicacion == "No fue posible publicar en la cola"
+    assert (
+        f"Cola no disponible, la notificación {res.notificacion_id} "
+        "queda pendiente de publicación" in caplog.text
+    )
+    assert "publicada correctamente" not in caplog.text
+
+
+def test_duplicada_y_resolucion_no_publican(uow: FakeUnitOfWork):
+    servicio, publicador = _servicio_con(uow)
+
+    _registrar(servicio)
+    _registrar(servicio)
+    _registrar(servicio, evento="REPUESTO")
+
+    assert len(publicador.publicados) == 1
+
+
+def test_error_inesperado_al_marcar_no_cambia_el_resultado(uow: FakeUnitOfWork, caplog):
+    servicio, _ = _servicio_con(uow)
+    original = uow.commit
+
+    def commit() -> None:
+        if uow.commits >= 1:
+            raise RuntimeError("falla simulada")
+        original()
+
+    uow.commit = commit  # type: ignore[method-assign]
+
+    res = _registrar(servicio)
+
+    assert res.resultado_log == "REGISTRADA"
+    assert "No se pudo registrar la publicación" in caplog.text
+
+
+def test_ciclo_reintenta_pendientes_en_orden_de_creacion(uow: FakeUnitOfWork, caplog):
+    caplog.set_level(logging.INFO)
+    servicio, publicador = _servicio_con(uow)
+    publicador.caido = True
+    ids = [_registrar(servicio, productoId=f"P-{i}").notificacion_id for i in range(3)]
+    for edad, id in zip((5, 10, 1), ids, strict=True):  # la tercera aún no cumple 1 minuto
+        _envejecer(uow, id, edad)
+    _envejecer(uow, ids[2], 0)
+    publicador.caido = False
+
+    resumen, errores = servicio.ejecutar_ciclo()
+
+    assert resumen["publicaciones"] == 2
+    assert errores == []
+    assert [m.notificacion_id for m in publicador.publicados] == [ids[1], ids[0]]
+    assert uow.notificaciones_guardadas[ids[2]].publicada_at is None
+    assert f"Notificación {ids[1]} publicada correctamente" in caplog.text
+
+
+def test_ciclo_no_republica_las_ya_publicadas(uow: FakeUnitOfWork):
+    servicio, publicador = _servicio_con(uow)
+    res = _registrar(servicio)
+    _envejecer(uow, res.notificacion_id, 10)
+
+    assert servicio.ejecutar_ciclo()[0]["publicaciones"] == 0
+    assert servicio.ejecutar_ciclo()[0]["publicaciones"] == 0
+    assert len(publicador.publicados) == 1
+
+
+def test_ciclo_con_broker_caido_cuenta_fallos_y_agota_a_los_tres_intentos(
+    uow: FakeUnitOfWork, caplog
+):
+    caplog.set_level(logging.INFO)
+    servicio, publicador = _servicio_con(uow)
+    publicador.caido = True
+    res = _registrar(servicio)
+    _envejecer(uow, res.notificacion_id, 10)
+
+    resultados = [servicio.ejecutar_ciclo() for _ in range(3)]
+    servicio.ejecutar_ciclo()  # con 3 intentos ya no se toma
+
+    assert all(r == ({"alertas": 0, "publicaciones": 0}, []) for r in resultados)
+    assert uow.notificaciones_guardadas[res.notificacion_id].intentos_publicacion == 3
+    assert (
+        caplog.text.count(
+            f"La notificación {res.notificacion_id} no pudo publicarse tras 3 intentos"
+        )
+        == 1
+    )
+
+
+def _pendientes(servicio: ServicioNotificaciones, uow: FakeUnitOfWork, n: int) -> list[UUID]:
+    publicador = servicio._publicador
+    assert isinstance(publicador, FakePublicador)
+    publicador.caido = True
+    ids = [_registrar(servicio, productoId=f"Q-{i}").notificacion_id for i in range(n)]
+    for edad, id in zip(range(10 + n, 10, -1), ids, strict=True):
+        _envejecer(uow, id, edad)
+    publicador.caido = False
+    return ids
+
+
+def test_ciclo_con_broker_caido_se_detiene_en_la_primera_fila(uow: FakeUnitOfWork):
+    servicio, publicador = _servicio_con(uow)
+    ids = _pendientes(servicio, uow, 3)
+    publicador.caido = True
+
+    resumen, _ = servicio.ejecutar_ciclo()
+
+    assert resumen["publicaciones"] == 0
+    assert [uow.notificaciones_guardadas[i].intentos_publicacion for i in ids] == [2, 1, 1]
+
+
+def test_ciclo_error_inesperado_en_una_fila_no_deshace_las_publicadas(uow: FakeUnitOfWork, caplog):
+    class PublicadorRoto(FakePublicador):
+        def publicar(self, mensaje: puertos.MensajeNotificacion) -> None:
+            if len(self.publicados) == 1 and not self.caido:
+                self.caido = True  # solo la 2.ª llamada falla
+                raise RuntimeError("falla simulada")
+            super().publicar(mensaje)
+
+    publicador = PublicadorRoto()
+    servicio = ServicioNotificaciones(lambda: uow, publicador)
+    ids = _pendientes(servicio, uow, 3)
+    publicador.caido = False
+    rollbacks = uow.rollbacks
+
+    resumen, errores = servicio.ejecutar_ciclo()
+
+    assert (resumen["publicaciones"], errores) == (1, [])
+    assert uow.rollbacks == rollbacks
+    n = [uow.notificaciones_guardadas[i] for i in ids]
+    assert n[0].publicada_at is not None
+    assert (n[1].publicada_at, n[1].intentos_publicacion) == (None, 2)
+    assert n[1].ultimo_error_publicacion == "RuntimeError"
+    assert "Error inesperado al publicar la notificación" in caplog.text
