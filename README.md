@@ -38,6 +38,8 @@ curl -i http://localhost:8090/equipos/1
 El puerto publicado es el 8090 (`API_PORT` en `.env`); dentro del contenedor la API escucha en el 8000.
 Swagger en http://localhost:8090/docs. Errores: 404 (no existe), 409 (nombre repetido), 422 (datos inválidos).
 
+`docker compose` levanta también RabbitMQ para la cola de mensajes; ver [docs/sprint2/cola.md](docs/sprint2/cola.md).
+
 ## 4. Tests locales
 
 ```bash

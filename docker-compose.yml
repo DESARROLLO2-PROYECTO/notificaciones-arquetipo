@@ -15,6 +15,23 @@ services:
       retries: 10
     networks: [notif_net]
 
+  rabbitmq:
+    # RabbitMQ local en lugar de CloudAMQP: misma versión mayor que el plan gratuito.
+    # El usuario "guest" solo acepta conexiones desde localhost, por eso se define otro.
+    image: rabbitmq:3.13.7-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - notif_rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    networks: [notif_net]
+
   api:
     build: .
     env_file: .env
@@ -22,6 +39,8 @@ services:
       - "${API_PORT:-8090}:8000"
     depends_on:
       db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test:
@@ -40,3 +59,4 @@ networks:
 
 volumes:
   notif_pgdata:
+  notif_rabbitmq:
