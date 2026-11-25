@@ -50,7 +50,7 @@ uv run pytest                    # unitarios + integración
 uv run pytest tests/unit         # solo unitarios (sin BD ni Docker)
 ```
 
-La integración usa testcontainers con `postgres:16.15-alpine` y requiere Docker; sin él se omite en local, pero en CI el arranque fallido de Postgres rompe el build.
+La integración usa testcontainers con `postgres:16.15-alpine` y `rabbitmq:3.13.7-alpine` (propios, no el compose ni CloudAMQP) y requiere Docker; sin él esas pruebas se omiten en local, pero en CI rompen el build. Para ver por qué se omitieron: `uv run pytest -rs`; para que fallen en vez de omitirse: `CI=1 uv run pytest`.
 
 ## 5. Cobertura
 
