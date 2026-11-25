@@ -40,6 +40,8 @@ Swagger en http://localhost:8090/docs. Errores: 404 (no existe), 409 (nombre rep
 
 `docker compose` levanta también RabbitMQ para la cola de mensajes; ver [docs/sprint2/cola.md](docs/sprint2/cola.md).
 
+Para mostrar el funcionamiento con equipos falsos: `uv run python -m scripts.demo --preparar` y luego `uv run python -m scripts.demo` (ver [docs/demo.md](docs/demo.md)).
+
 ## 4. Tests locales
 
 ```bash
