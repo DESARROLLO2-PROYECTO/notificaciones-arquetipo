@@ -3,14 +3,16 @@
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 
 from scripts.demo.cola import Escucha
-from scripts.demo.configuracion import Configuracion, cargar, preparar_llaves
+from scripts.demo.configuracion import Configuracion, cargar, descubrir_amqp, preparar_llaves
 from scripts.demo.equipos_falsos import Administracion, ClienteApi, Fabricacion, Inventario
 from scripts.demo.salida import Respuesta, Salida
 
@@ -47,8 +49,11 @@ def correr(
     if isinstance(info, dict):
         salida.linea(f"   {info['info']['title']} · contrato {info['info']['version']}")
     motivo = escucha.abrir()
-    salida.linea("   Cola: " + ("escuchando una copia de las colas de los equipos" if not motivo
-                               else f"omitida ({motivo})"))  # fmt: skip
+    if motivo:
+        salida.linea(f"   Cola: omitida ({motivo}). Se activa con AMQP_URL, o con --preparar "
+                     "si la API corre en el docker compose local.")  # fmt: skip
+    else:
+        salida.linea("   Cola: escuchando una copia de las colas de los equipos")
     salida.pausa("Enter para empezar")
 
     # --- 1
@@ -235,6 +240,8 @@ def main(
         salida.linea("  Use --preparar (docker compose local) o defina DEMO_LLAVE_INVENTARIO, "
                      "DEMO_LLAVE_FABRICACION y DEMO_LLAVE_ADMIN.")  # fmt: skip
         return 2
+    if not config.amqp_url and urlsplit(config.url).hostname in ("localhost", "127.0.0.1"):
+        config = replace(config, amqp_url=descubrir_amqp(Path.cwd()))
     cliente = http or httpx.Client(base_url=config.url, timeout=15)
     escucha = Escucha(config.amqp_url)
     try:

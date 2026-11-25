@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 _LLAVE = re.compile(r"[A-Za-z0-9_-]{32,}")  # la llave generada, de 43 caracteres
 ARCHIVO_LLAVES = Path(".demo.env")
@@ -99,6 +100,37 @@ def cargar(
     return config, args.preparar
 
 
+def _compose(raiz: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(  # noqa: S603 - comando fijo, sin entrada del usuario
+            ["docker", "compose", *args], cwd=raiz, capture_output=True, text=True, check=False
+        )
+    except OSError:  # no hay docker
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def descubrir_amqp(raiz: Path) -> str | None:
+    """El broker que usa la API del `docker compose` local, visto desde esta máquina.
+
+    La API lo conoce por su nombre interno (`rabbitmq`), que no existe fuera de Docker: se
+    reemplaza por `localhost` y el puerto publicado. Si apunta a un broker externo (CloudAMQP),
+    se devuelve igual, porque ese sí se alcanza desde aquí.
+    """
+    url = _compose(raiz, "exec", "-T", "api", "printenv", "AMQP_URL")
+    if not url:
+        return None
+    partes = urlsplit(url)
+    if partes.hostname != "rabbitmq":
+        return url
+    publicado = _compose(raiz, "port", "rabbitmq", "5672")
+    if not publicado or ":" not in publicado:
+        return None
+    puerto = publicado.rsplit(":", 1)[1]
+    credenciales = f"{partes.netloc.rsplit('@', 1)[0]}@" if "@" in partes.netloc else ""
+    return urlunsplit(partes._replace(netloc=f"{credenciales}localhost:{puerto}"))
+
+
 def preparar_llaves(raiz: Path, archivo: Path | None = None) -> dict[str, str]:
     """Crea una llave por rol dentro del contenedor `api` y las guarda en `.demo.env`."""
     llaves: dict[str, str] = {}
@@ -118,5 +150,8 @@ def preparar_llaves(raiz: Path, archivo: Path | None = None) -> dict[str, str]:
     contenido = "# Llaves del demo (no se suben a git)\n" + "".join(
         f"{_VARIABLE_LLAVE[rol]}={llave}\n" for rol, llave in llaves.items()
     )
+    amqp = descubrir_amqp(raiz)
+    if amqp:  # para mirar la cola del mismo broker que usa la API local
+        contenido += f"AMQP_URL={amqp}\n"
     (ARCHIVO_LLAVES if archivo is None else archivo).write_text(contenido, encoding="utf-8")
     return llaves

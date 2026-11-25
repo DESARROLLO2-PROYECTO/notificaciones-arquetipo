@@ -13,9 +13,11 @@ uv run python -m scripts.demo --preparar  # crea las 3 llaves y las guarda en .d
 uv run python -m scripts.demo             # el demo, con pausas (Enter para avanzar)
 ```
 
-Para ver también los mensajes que llegan a la cola local, agregue
-`AMQP_URL=amqp://notif:cambiar_clave@localhost:5672/` antes del comando. Sin `AMQP_URL` el demo
-omite esa escena y sigue.
+**La cola se detecta sola** cuando la API corre en el `docker compose` local: el demo le pregunta
+al contenedor `api` qué broker usa (`AMQP_URL`) y lo traduce a una dirección alcanzable desde su
+máquina (`rabbitmq` pasa a `localhost` y el puerto publicado; un broker externo como CloudAMQP se
+usa tal cual). `--preparar` además lo guarda en `.demo.env`. Si la API usa otro broker, defina
+`AMQP_URL` a mano. Sin cola, el demo omite la escena 4 y avisa cómo activarla.
 
 ## Contra otra máquina (cambiar la IP)
 
@@ -36,7 +38,7 @@ Las llaves (las entrega Notificaciones, una por rol) y la cola van por variables
 | `DEMO_LLAVE_INVENTARIO` | Llave del rol `inventario` |
 | `DEMO_LLAVE_FABRICACION` | Llave del rol `fabricacion` |
 | `DEMO_LLAVE_ADMIN` | Llave del rol `notificaciones` (solo para el ciclo) |
-| `AMQP_URL` | Broker para mirar las colas; debe ser el mismo que usa esa API (CloudAMQP: `amqps://...`) |
+| `AMQP_URL` | Broker para mirar las colas; debe ser el mismo que usa esa API (CloudAMQP: `amqps://...`). Con la API local se detecta sola; con otra IP hay que definirla |
 
 Prioridad: argumento, variable de entorno, `.demo.env`. `--preparar` solo sirve con el
 `docker compose` local.

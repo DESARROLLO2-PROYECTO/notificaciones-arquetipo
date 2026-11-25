@@ -160,3 +160,79 @@ def test_el_cliente_mide_y_decodifica(ruta):
     r = cliente.enviar("GET", ruta, None)
 
     assert (r.estado, r.cuerpo) == (200, {"status": "UP"}) and r.ms >= 0
+
+
+def _compose_falso(monkeypatch, respuestas: dict[str, str | None]):
+    """Reemplaza `docker compose ...` por respuestas fijas según el subcomando."""
+
+    def falso(raiz, *args):
+        return respuestas.get(args[0])
+
+    monkeypatch.setattr(configuracion, "_compose", falso)
+
+
+def test_el_broker_de_la_api_local_se_traduce_a_localhost_con_el_puerto_publicado(
+    monkeypatch, tmp_path: Path
+):
+    _compose_falso(
+        monkeypatch,
+        {"exec": "amqp://notif:cambiar_clave@rabbitmq:5672/", "port": "127.0.0.1:5673"},
+    )
+
+    assert configuracion.descubrir_amqp(tmp_path) == "amqp://notif:cambiar_clave@localhost:5673/"
+
+
+def test_un_broker_externo_se_usa_tal_cual(monkeypatch, tmp_path: Path):
+    _compose_falso(monkeypatch, {"exec": "amqps://u:p@lemur.cloudamqp.com/vh"})
+
+    assert configuracion.descubrir_amqp(tmp_path) == "amqps://u:p@lemur.cloudamqp.com/vh"
+
+
+@pytest.mark.parametrize(
+    "respuestas",
+    [{}, {"exec": "amqp://u:p@rabbitmq:5672/"}],  # sin API en el compose / puerto sin publicar
+)
+def test_si_no_se_puede_descubrir_no_hay_cola(monkeypatch, tmp_path: Path, respuestas):
+    _compose_falso(monkeypatch, respuestas)
+
+    assert configuracion.descubrir_amqp(tmp_path) is None
+
+
+def test_compose_sin_docker_devuelve_none(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("PATH", "")
+
+    assert configuracion._compose(tmp_path, "ps") is None
+
+
+def test_preparar_guarda_tambien_la_cola_para_mirarla(monkeypatch, tmp_path: Path):
+    class Resultado:
+        returncode = 0
+        stdout = "API Key (se muestra una sola vez): " + "k" * 43
+        stderr = ""
+
+    monkeypatch.setattr(configuracion.subprocess, "run", lambda *a, **k: Resultado())
+    monkeypatch.setattr(configuracion, "descubrir_amqp", lambda raiz: "amqp://u:p@localhost:5673/")
+    archivo = tmp_path / ".demo.env"
+
+    llaves = configuracion.preparar_llaves(tmp_path, archivo)
+
+    assert set(llaves) == {"inventario", "fabricacion", "notificaciones"}
+    guardado = configuracion.leer_archivo(archivo)
+    assert guardado["AMQP_URL"] == "amqp://u:p@localhost:5673/"
+    assert guardado["DEMO_LLAVE_ADMIN"] == "k" * 43
+
+
+def test_en_local_el_demo_descubre_la_cola_si_no_hay_amqp_url(monkeypatch, tmp_path: Path):
+    from scripts.demo import principal
+
+    monkeypatch.chdir(tmp_path)
+    for variable, valor in LLAVES.items():
+        monkeypatch.setenv(variable, valor)
+    monkeypatch.delenv("AMQP_URL", raising=False)
+    consultas: list[Path] = []
+    monkeypatch.setattr(principal, "descubrir_amqp", lambda raiz: consultas.append(raiz))
+
+    principal.main(["--rapido", "--url", "http://127.0.0.1:1"], escribir=lambda _: None)
+    principal.main(["--rapido", "--url", "http://192.168.1.50:1"], escribir=lambda _: None)
+
+    assert consultas == [tmp_path]  # solo cuando apunta a la propia máquina
