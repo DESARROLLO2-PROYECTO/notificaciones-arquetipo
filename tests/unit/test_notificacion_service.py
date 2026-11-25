@@ -1,0 +1,463 @@
+import logging
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from types import TracebackType
+from unittest.mock import MagicMock
+from uuid import UUID
+
+import pytest
+
+from app.domain import puertos
+from app.domain.errores import TipoNotificacionInvalido
+from app.domain.notificacion_service import ErrorConcurrenciaAlerta, ServicioNotificaciones
+
+# --- Fakes en memoria (Ports & UnitOfWork) ---
+
+
+class FakeEquipoRepo:
+    def __init__(self) -> None:
+        self.equipos: dict[int, puertos.Equipo] = {}
+
+    def crear(self, equipo: puertos.Equipo) -> puertos.Equipo:
+        nuevo = replace(equipo, id=len(self.equipos) + 1)
+        self.equipos[nuevo.id or 0] = nuevo
+        return nuevo
+
+    def obtener(self, id: int) -> puertos.Equipo | None:
+        return self.equipos.get(id)
+
+
+class FakeTipoNotificacionRepo:
+    def __init__(self) -> None:
+        self.tipos: dict[str, puertos.TipoNotificacion] = {}
+
+    def crear(self, tipo_notificacion: puertos.TipoNotificacion) -> puertos.TipoNotificacion:
+        self.tipos[tipo_notificacion.codigo] = tipo_notificacion
+        return tipo_notificacion
+
+    def obtener_por_codigo(self, codigo: str) -> puertos.TipoNotificacion | None:
+        return self.tipos.get(codigo)
+
+
+class FakeNotificacionRepo:
+    def __init__(self, uow: "FakeUnitOfWork") -> None:
+        self._uow = uow
+
+    def crear(self, notificacion: puertos.Notificacion) -> puertos.Notificacion:
+        self._uow._pendientes_notificaciones[notificacion.id] = notificacion
+        return notificacion
+
+    def obtener(self, id: UUID) -> puertos.Notificacion | None:
+        return self._uow.notificaciones_guardadas.get(id)
+
+
+class FakeAlertaRepo:
+    def __init__(self, uow: "FakeUnitOfWork") -> None:
+        self._uow = uow
+
+    def crear(self, alerta: puertos.Alerta) -> puertos.Alerta:
+        siguiente_id = len(self._uow.alertas_guardadas) + len(self._uow._pendientes_alertas) + 1
+        asignada = replace(alerta, id=siguiente_id)
+        self._uow._pendientes_alertas.append(asignada)
+        return asignada
+
+    def obtener_activa(self, tipo: str, clave: str) -> puertos.Alerta | None:
+        ahora = datetime.now(UTC)
+        for alerta in self._uow.alertas_guardadas:
+            if (
+                alerta.tipo == tipo
+                and alerta.clave == clave
+                and alerta.motivo_resolucion is None
+                and (alerta.expira_at is None or alerta.expira_at > ahora)
+            ):
+                return alerta
+        return None
+
+
+class FakeUnitOfWork:
+    def __init__(self) -> None:
+        self.equipos_fake = FakeEquipoRepo()
+        self.tipos_fake = FakeTipoNotificacionRepo()
+
+        # 2. Annotate with the exact Protocol types from puertos.py
+        self.equipos: puertos.EquipoRepository = self.equipos_fake
+        self.tipos: puertos.TipoNotificacionRepository = self.tipos_fake
+        self.notificaciones: puertos.NotificacionRepository = FakeNotificacionRepo(self)
+        self.alertas: puertos.AlertaRepository = FakeAlertaRepo(self)
+
+        # Estado confirmado (persiste solo tras commit)
+        self.notificaciones_guardadas: dict[UUID, puertos.Notificacion] = {}
+        self.alertas_guardadas: list[puertos.Alerta] = []
+
+        # Estado pendiente en transacción
+        self._pendientes_notificaciones: dict[UUID, puertos.Notificacion] = {}
+        self._pendientes_alertas: list[puertos.Alerta] = []
+
+        self.commits = 0
+        self.rollbacks = 0
+        self.alerta_concurrente_al_hacer_commit: puertos.Alerta | None = None
+        self.fallar_en_commit: Exception | None = None
+
+    def __enter__(self) -> "FakeUnitOfWork":
+        self._pendientes_notificaciones.clear()
+        self._pendientes_alertas.clear()
+        return self
+
+    # 3. Match exact __exit__ type annotations from puertos.UnitOfWork
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if exc_type is not None:
+            self.rollback()
+
+    def commit(self) -> None:
+        if self.alerta_concurrente_al_hacer_commit is not None:
+            ganadora = self.alerta_concurrente_al_hacer_commit
+            self.alerta_concurrente_al_hacer_commit = None
+            self.alertas_guardadas.append(ganadora)
+            raise ErrorConcurrenciaAlerta("Colisión de índice único parcial")
+
+        if self.fallar_en_commit is not None:
+            err = self.fallar_en_commit
+            self.fallar_en_commit = None
+            raise err
+
+        self.notificaciones_guardadas.update(self._pendientes_notificaciones)
+        self.alertas_guardadas.extend(self._pendientes_alertas)
+        self._pendientes_notificaciones.clear()
+        self._pendientes_alertas.clear()
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self._pendientes_notificaciones.clear()
+        self._pendientes_alertas.clear()
+        self.rollbacks += 1
+
+
+# --- Fixtures y helpers ---
+
+
+@pytest.fixture
+def uow() -> FakeUnitOfWork:
+    fake = FakeUnitOfWork()
+    fake.equipos_fake.equipos[1] = puertos.Equipo(id=1, nombre="inventario", es_admin=False)
+    fake.equipos_fake.equipos[2] = puertos.Equipo(id=2, nombre="fabricacion", es_admin=False)
+
+    fake.tipos_fake.tipos["STOCK_BAJO_INSUMO"] = puertos.TipoNotificacion(
+        codigo="STOCK_BAJO_INSUMO",
+        campo_clave="productoId",
+        ttl_alerta_min=60,
+        activo=True,
+        equipo_emisor_id=1,
+        equipo_destino_id=1,
+    )
+    fake.tipos_fake.tipos["STOCK_BAJO_PRODUCTO"] = puertos.TipoNotificacion(
+        codigo="STOCK_BAJO_PRODUCTO",
+        campo_clave="productoId",
+        ttl_alerta_min=0,
+        activo=True,
+        equipo_emisor_id=1,
+        equipo_destino_id=2,
+    )
+    fake.tipos_fake.tipos["TIPO_INACTIVO"] = puertos.TipoNotificacion(
+        codigo="TIPO_INACTIVO",
+        campo_clave="productoId",
+        ttl_alerta_min=30,
+        activo=False,
+        equipo_emisor_id=1,
+        equipo_destino_id=1,
+    )
+    return fake
+
+
+def _datos_stock(**cambios) -> dict:
+    base = {
+        "tipo": "STOCK_BAJO_INSUMO",
+        "evento": "DETECTADA",
+        "productoId": "INS-001",
+        "nombre": "Acero 304",
+        "stockActual": 3,
+        "stockMinimo": 10,
+    }
+    base.update(cambios)
+    return base
+
+
+# --- Tests ---
+
+
+def test_registrar_notificacion_nueva_crea_notificacion_y_alerta(uow: FakeUnitOfWork, caplog):
+    # Arrange
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    datos = _datos_stock()
+
+    # Act
+    res = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", datos, equipo_emisor_id=1
+    )
+
+    # Assert
+    assert res.duplicada is False
+    assert res.tipo == "STOCK_BAJO_INSUMO"
+    assert res.destino == "inventario"
+    assert res.clave == "INS-001"
+    assert res.resultado_log == "REGISTRADA"
+    assert uow.commits == 1
+
+    # Notificación persistida sin 'mensaje' dentro del payload (Criterio 1)
+    notif = uow.notificaciones_guardadas[res.notificacion_id]
+    assert notif.tipo == "STOCK_BAJO_INSUMO"
+    assert notif.equipo_destino_id == 1
+    assert isinstance(notif.payload, dict)
+    assert notif.payload == datos
+    assert "mensaje" not in notif.payload
+
+    # Alerta activa creada con TTL de 60 minutos
+    assert len(uow.alertas_guardadas) == 1
+    alerta = uow.alertas_guardadas[0]
+    assert alerta.notificacion_id == res.notificacion_id
+    assert alerta.clave == "INS-001"
+    assert alerta.expira_at is not None
+    assert alerta.expira_at > alerta.creada_at
+
+    # Log estructurado (Criterio 8)
+    assert (
+        "resultado=REGISTRADA tipo=STOCK_BAJO_INSUMO destino=inventario "
+        f"clave=INS-001 notificacion_id={res.notificacion_id}" in caplog.text
+    )
+
+
+def test_registrar_con_ttl_cero_deja_expira_at_en_none(uow: FakeUnitOfWork):
+    # Arrange
+    servicio = ServicioNotificaciones(lambda: uow)
+    datos = _datos_stock(tipo="STOCK_BAJO_PRODUCTO", productoId="CAD-99")
+
+    # Act
+    res = servicio.registrar_notificacion(
+        "STOCK_BAJO_PRODUCTO", "DETECTADA", datos, equipo_emisor_id=1
+    )
+
+    # Assert
+    assert res.destino == "fabricacion"
+    assert uow.alertas_guardadas[0].expira_at is None
+
+
+def test_registrar_cuando_ya_existe_alerta_activa_devuelve_id_original(uow: FakeUnitOfWork, caplog):
+    # Arrange
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    datos = _datos_stock()
+    primero = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", datos, equipo_emisor_id=1
+    )
+
+    # Act (reintento con stock distinto para el mismo tipo y productoId)
+    segundo = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(stockActual=1), equipo_emisor_id=1
+    )
+
+    # Assert
+    assert segundo.duplicada is True
+    assert segundo.notificacion_id == primero.notificacion_id
+    assert segundo.resultado_log == "ALERTA_YA_ACTIVA"
+    assert len(uow.notificaciones_guardadas) == 1
+    assert len(uow.alertas_guardadas) == 1
+    assert uow.commits == 1  # No hizo un segundo commit
+    assert "resultado=ALERTA_YA_ACTIVA" in caplog.text
+
+
+def test_registrar_mismo_producto_distinto_tipo_crea_segunda_alerta(uow: FakeUnitOfWork):
+    # Arrange
+    servicio = ServicioNotificaciones(lambda: uow)
+
+    # Act
+    r1 = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(productoId="X-1")
+    )
+    r2 = servicio.registrar_notificacion(
+        "STOCK_BAJO_PRODUCTO",
+        "DETECTADA",
+        _datos_stock(tipo="STOCK_BAJO_PRODUCTO", productoId="X-1"),
+    )
+
+    # Assert
+    assert r1.notificacion_id != r2.notificacion_id
+    assert r2.duplicada is False
+    assert len(uow.alertas_guardadas) == 2
+
+
+def test_registrar_cuando_alerta_anterior_expiro_crea_nueva(uow: FakeUnitOfWork):
+    # Arrange
+    servicio = ServicioNotificaciones(lambda: uow)
+    pasado = datetime.now(UTC) - timedelta(hours=2)
+    alerta_expirada = puertos.Alerta(
+        id=1,
+        tipo="STOCK_BAJO_INSUMO",
+        clave="INS-001",
+        notificacion_id=UUID("11111111-1111-1111-1111-111111111111"),
+        creada_at=pasado,
+        expira_at=pasado + timedelta(minutes=30),
+    )
+    uow.alertas_guardadas.append(alerta_expirada)
+
+    # Act
+    res = servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+
+    # Assert
+    assert res.duplicada is False
+    assert res.notificacion_id != alerta_expirada.notificacion_id
+    assert len(uow.alertas_guardadas) == 2
+
+
+@pytest.mark.parametrize("codigo_invalido", ["NO_EXISTE", "TIPO_INACTIVO"])
+def test_registrar_tipo_invalido_o_inactivo_lanza_error_y_loggea_rechazo(
+    uow: FakeUnitOfWork, caplog, codigo_invalido: str
+):
+    # Arrange
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+
+    # Act / Assert
+    with pytest.raises(TipoNotificacionInvalido):
+        servicio.registrar_notificacion(
+            codigo_invalido, "DETECTADA", _datos_stock(tipo=codigo_invalido)
+        )
+
+    assert len(uow.notificaciones_guardadas) == 0
+    assert len(uow.alertas_guardadas) == 0
+    assert (
+        f"resultado=RECHAZADA tipo={codigo_invalido} destino=desconocido "
+        "clave=INS-001 notificacion_id=None" in caplog.text
+    )
+
+
+def test_concurrencia_simultanea_captura_colision_y_devuelve_alerta_ganadora(
+    uow: FakeUnitOfWork, caplog
+):
+    # Arrange (Criterio 6: otro hilo inserta la alerta justo antes de nuestro commit)
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+    id_ganador = UUID("22222222-2222-2222-2222-222222222222")
+    uow.alerta_concurrente_al_hacer_commit = puertos.Alerta(
+        id=99,
+        tipo="STOCK_BAJO_INSUMO",
+        clave="INS-001",
+        notificacion_id=id_ganador,
+        creada_at=datetime.now(UTC),
+    )
+
+    # Act
+    res = servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+
+    # Assert
+    assert res.duplicada is True
+    assert res.notificacion_id == id_ganador
+    assert res.resultado_log == "ALERTA_YA_ACTIVA"
+    assert uow.rollbacks == 1
+    assert len(uow.notificaciones_guardadas) == 0  # La notificación perdedora no se guardó
+    assert "resultado=ALERTA_YA_ACTIVA" in caplog.text
+
+
+def test_falla_interna_en_commit_hace_rollback_y_no_deja_datos_parciales(uow: FakeUnitOfWork):
+    # Arrange (Criterio 7)
+    servicio = ServicioNotificaciones(lambda: uow)
+    uow.fallar_en_commit = RuntimeError("Conexión perdida con PostgreSQL")
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="Conexión perdida"):
+        servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+
+    assert uow.rollbacks == 1
+    assert len(uow.notificaciones_guardadas) == 0
+    assert len(uow.alertas_guardadas) == 0
+
+
+def _datos_base() -> dict:
+    return {
+        "tipo": "STOCK_BAJO_INSUMO",
+        "evento": "DETECTADA",
+        "productoId": "INS-100",
+        "nombre": "Acero",
+        "stockActual": 2,
+        "stockMinimo": 10,
+    }
+
+
+def _tipo_notif(equipo_destino_id: int | None = 2) -> puertos.TipoNotificacion:
+    return puertos.TipoNotificacion(
+        codigo="STOCK_BAJO_INSUMO",
+        campo_clave="productoId",
+        ttl_alerta_min=60,
+        activo=True,
+        equipo_emisor_id=1,
+        equipo_destino_id=equipo_destino_id,
+    )
+
+
+def test_concurrencia_sin_alerta_activa_posterior_relanza_error():
+    """Cubre línea 53 (alerta is None tras ErrorConcurrenciaAlerta) y
+    línea 169 (tipo_notif is None en _resolver_destino)."""
+    uow_1 = MagicMock()
+    uow_1.__enter__.return_value = uow_1
+    uow_1.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=2)
+    uow_1.equipos.obtener.return_value = puertos.Equipo(id=2, nombre="compras", es_admin=False)
+    uow_1.alertas.obtener_activa.return_value = None
+    uow_1.notificaciones.crear.return_value = puertos.Notificacion(
+        id=10,
+        tipo="STOCK_BAJO_INSUMO",
+        creada_at=None,
+        equipo_emisor_id=1,
+        equipo_destino_id=2,
+        payload=_datos_base(),
+    )
+    uow_1.commit.side_effect = ErrorConcurrenciaAlerta("colision")
+
+    uow_2 = MagicMock()
+    uow_2.__enter__.return_value = uow_2
+    # En el segundo UoW, obtener_por_codigo devuelve None ->
+    # cubre línea 169 (_resolver_destino -> 'desconocido')
+    uow_2.tipos.obtener_por_codigo.return_value = None
+    # obtener_activa sigue devolviendo None -> cubre línea 53 (raise)
+    uow_2.alertas.obtener_activa.return_value = None
+
+    uows = iter([uow_1, uow_2])
+    servicio = ServicioNotificaciones(lambda: next(uows))
+
+    with pytest.raises(ErrorConcurrenciaAlerta):
+        servicio.registrar_notificacion(
+            tipo_codigo="STOCK_BAJO_INSUMO",
+            evento="DETECTADA",
+            datos=_datos_base(),
+            equipo_emisor_id=1,
+        )
+
+
+def test_resolver_destino_sin_equipo_destino_o_equipo_inexistente():
+    """Cubre línea 176 (equipo_destino_id is None -> 'desconocido') y rama equipo is None."""
+    uow = MagicMock()
+    uow.__enter__.return_value = uow
+    uow.tipos.obtener_por_codigo.return_value = _tipo_notif(equipo_destino_id=None)
+    uow.alertas.obtener_activa.return_value = None
+    uow.notificaciones.crear.return_value = puertos.Notificacion(
+        id=11,
+        tipo="STOCK_BAJO_INSUMO",
+        creada_at=None,
+        equipo_emisor_id=1,
+        equipo_destino_id=None,
+        payload=_datos_base(),
+    )
+
+    servicio = ServicioNotificaciones(lambda: uow)
+    res = servicio.registrar_notificacion(
+        tipo_codigo="STOCK_BAJO_INSUMO",
+        evento="DETECTADA",
+        datos=_datos_base(),
+        equipo_emisor_id=1,
+    )
+
+    assert res.destino == "desconocido"
+    uow.equipos.obtener.assert_not_called()

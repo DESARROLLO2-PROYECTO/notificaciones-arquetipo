@@ -22,3 +22,19 @@ class NoAutenticado(ErrorDominio):
         super().__init__("Acceso denegado")
         self.motivo = motivo
         self.rol = rol
+
+
+class ClaveDuplicada(ErrorDominio):
+    """409"""
+
+
+class TipoNotificacionInvalido(ErrorDominio):
+    """409"""
+
+
+class ClaveAlertaFaltante(ErrorDominio):
+    """400"""
+
+
+class ErrorConcurrenciaAlerta(Exception):
+    """Lanzada por el repositorio/UoW cuando choca el índice único parcial en Postgres."""
