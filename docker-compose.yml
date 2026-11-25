@@ -57,6 +57,18 @@ services:
       start_period: 15s
     networks: [notif_net]
 
+  planificador:
+    # Opcional: `docker compose --profile planificador up`. Corre el ciclo cada CICLO_INTERVALO_S.
+    # Apagado por defecto para que el demo controle cuándo corre el ciclo.
+    profiles: [planificador]
+    build: .
+    env_file: .env
+    command: ["python", "-m", "scripts.planificador"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [notif_net]
+
 networks:
   notif_net:
 

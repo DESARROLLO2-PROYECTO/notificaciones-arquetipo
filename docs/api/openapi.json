@@ -469,7 +469,7 @@
     },
     "description": "Módulo de **Notificaciones** del software de fabricación de Cutit Saws. Inventario y Fabricación\nle reportan eventos (por ejemplo, stock bajo) y el módulo los registra, evita duplicados, los\npublica en una cola interna y los entrega al equipo destino.\n\n## Autenticación\n\nToda solicitud (excepto `/health` y esta documentación) lleva la llave del equipo en el header\n`X-API-Key`. Cada llave tiene un rol (`inventario`, `fabricacion` o `notificaciones`) y solo puede\nemitir los tipos de su rol. Una llave enviada en la URL o en el cuerpo se ignora. Las llaves las\nentrega Notificaciones por un canal privado y se guardan solo como hash.\n\n## Convenciones\n\n- JSON en `camelCase`; fechas en UTC con formato ISO 8601.\n- Un evento `DETECTADA` repetido mientras la alerta sigue activa **no** crea otra notificación:\n  responde `200` con el id existente y `duplicada: true`. Es seguro reintentar.\n- Errores: `401` y `403` responden `{\"mensaje\": \"Acceso denegado\"}`; `422` lista los campos con\n  problema; `500` no expone detalles internos.\n- Los mensajes de error no cambian entre versiones menores: puede comparar contra ellos.\n\n## Entrega al equipo destino\n\nCada notificación se publica en una cola interna y se entrega por **webhook** a la URL que el\nequipo registre (ver `webhooks` y HU-NOT-16/17). Desde el Sprint 3 las entregas llevan firma\nHMAC; el receptor debe ignorar las repetidas usando `X-Notification-Id`.",
     "title": "API de Notificaciones",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -907,6 +907,10 @@
     {
       "description": "Desarrollo local (compose)",
       "url": "http://localhost:8090"
+    },
+    {
+      "description": "Producción (EC2, HTTPS)",
+      "url": "https://13-59-144-83.sslip.io"
     }
   ],
   "tags": [

@@ -104,8 +104,10 @@ def construir_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         precalentar_publicador()
-        yield
-        cerrar_publicador()  # no hace nada si la cola nunca se usó
+        try:
+            yield
+        finally:
+            cerrar_publicador()  # no hace nada si la cola nunca se usó
 
     app = FastAPI(
         title="API de Notificaciones",
@@ -113,7 +115,10 @@ def construir_app() -> FastAPI:
         description=contrato.DESCRIPCION,
         openapi_tags=contrato.ETIQUETAS,
         contact=contrato.CONTACTO,
-        servers=[{"url": "http://localhost:8090", "description": "Desarrollo local (compose)"}],
+        servers=[
+            {"url": "http://localhost:8090", "description": "Desarrollo local (compose)"},
+            {"url": "https://13-59-144-83.sslip.io", "description": "Producción (EC2, HTTPS)"},
+        ],
         generate_unique_id_function=contrato.id_operacion,
         lifespan=lifespan,
     )

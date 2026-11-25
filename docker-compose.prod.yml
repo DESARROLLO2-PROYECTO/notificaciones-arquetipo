@@ -22,7 +22,8 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "${API_PORT:-8090}:8000"
+      # Solo desde el propio servidor (lo usa el health check del CD). Hacia afuera entra Caddy.
+      - "127.0.0.1:${API_PORT:-8090}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -38,8 +39,47 @@ services:
       start_period: 15s
     networks: [notif_net]
 
+  planificador:
+    # Misma imagen que la API, otro proceso: corre el ciclo cada CICLO_INTERVALO_S (300 s):
+    # cierra alertas vencidas y reintenta las publicaciones pendientes (DAS: API y planificador
+    # separados). Espera a la API para no arrancar antes de las migraciones.
+    image: ${API_IMAGE:?falta API_IMAGE en .env}
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "scripts.planificador"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.planificador", "--verificar"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks: [notif_net]
+
+  caddy:
+    # HTTPS automático (Let's Encrypt) y puertos estándar, como pide el DAS (443).
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      DOMINIO: ${DOMINIO:?falta DOMINIO en .env}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data  # certificados: si se pierde, hay que volver a pedirlos
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [notif_net]
+
 networks:
   notif_net:
 
 volumes:
   notif_pgdata:
+  caddy_data:
+  caddy_config:

@@ -72,6 +72,31 @@ class Salida:
         self.linea(self._c(f"━━ Escena {numero}: {titulo}", "escena"))
         self.linea(self._c(f"   {explicacion}", "tenue"))
 
+    def criterio(self, numero: int, texto: str) -> None:
+        """Encabeza un criterio de aceptación con su texto del backlog."""
+        self.linea()
+        self.linea(self._c(f"━━ Criterio {numero}", "escena"))
+        for linea in textwrap.wrap(texto, width=88):
+            self.linea(self._c(f"   {linea}", "negrita"))
+
+    def comando(self, texto: str, titulo: str = "Comando de ejemplo") -> None:
+        """Un comando que se puede copiar y pegar en la terminal."""
+        self.linea(self._c(f"   ▸ {titulo}:", "tenue"))
+        for linea in texto.splitlines():
+            self.linea(self._c(f"       {linea}", "tenue"))
+
+    def evidencia(self, titulo: str, lineas: list[str]) -> None:
+        """Lo que se ve en la base de datos o en los registros, como prueba de lo ocurrido."""
+        self.linea(f"   🔎 {titulo}")
+        for linea in lineas:
+            self.linea(self._c(f"       {linea}", "tenue"))
+
+    def comprobar(self, escena: str, descripcion: str, correcto: bool) -> None:
+        """Marca una comprobación (✓ o ✗) y la suma al resumen."""
+        marca = self._c("✓", "ok") if correcto else self._c("✗", "mal")
+        self.linea(f"   {marca} {descripcion}")
+        self.registrar(escena, descripcion, correcto)
+
     def nota(self, texto: str) -> None:
         self.linea(self._c(f"   ℹ {texto}", "tenue"))
 

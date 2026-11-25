@@ -5,7 +5,7 @@ Para los equipos de **Inventario** y **Fabricación** (y cualquiera que integre 
 - Contrato: [`openapi.json`](openapi.json) (OpenAPI 3.1). Se genera del código y una prueba falla si
   queda desactualizado: `uv run python -m scripts.exportar_openapi`.
 - Documentación interactiva: `/docs` (Swagger UI) y `/redoc` en el servidor.
-- Versión actual del contrato: **0.3.0**.
+- Versión actual del contrato: **0.3.1**.
 
 Impórtelo en Swagger Editor, Postman o Insomnia, o genere un cliente con `openapi-generator`.
 
@@ -13,10 +13,12 @@ Impórtelo en Swagger Editor, Postman o Insomnia, o genere un cliente con `opena
 
 1. **Pida su llave** al equipo de Notificaciones. Llega por un canal privado y se muestra una sola
    vez. Su rol (`inventario` o `fabricacion`) define qué tipos puede emitir.
-2. **Envíe eventos** a `POST /notificaciones` con el header `X-API-Key`:
+2. **Envíe eventos** a `POST /notificaciones` con el header `X-API-Key`. En producción la dirección
+   es `https://13-59-144-83.sslip.io` (HTTPS; el puerto 8090 no está abierto hacia afuera). Para
+   probar en su máquina, `http://localhost:8090`:
 
    ```bash
-   curl -X POST http://localhost:8090/notificaciones \
+   curl -X POST https://13-59-144-83.sslip.io/notificaciones \
      -H "X-API-Key: $LLAVE" -H "Content-Type: application/json" \
      -d '{"tipo":"STOCK_BAJO_INSUMO","evento":"DETECTADA","productoId":"INS-001",
           "nombre":"Acero inoxidable 304","stockActual":4,"stockMinimo":10}'

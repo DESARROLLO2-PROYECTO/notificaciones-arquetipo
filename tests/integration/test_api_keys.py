@@ -160,3 +160,18 @@ def test_migracion_reemplaza_prefijos_antiguos_sin_invalidar_llaves(postgres):
         assert registro.hash == hash_llave
         assert registro.activa is True
         assert registro.prefijo == hash_llave[:8]
+
+
+def test_listar_devuelve_las_llaves_sin_su_valor(postgres):
+    with Session(postgres) as session, session.begin():
+        servicio = ApiKeyService(ApiKeyRepo(session))
+        generada = servicio.generar("fabricacion")
+        servicio.desactivar(generada.id)
+
+    with Session(postgres) as session:
+        resumen = {r.id: r for r in ApiKeyService(ApiKeyRepo(session)).listar()}
+
+    nuestra = resumen[generada.id]
+    assert (nuestra.rol, nuestra.activa) == ("fabricacion", False)
+    assert nuestra.prefijo == hashlib.sha256(generada.llave.encode()).hexdigest()[:8]
+    assert generada.llave not in repr(nuestra)

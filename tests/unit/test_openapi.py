@@ -39,7 +39,10 @@ def test_el_archivo_publicado_esta_al_dia():
 def test_el_contrato_tiene_informacion_para_otros_equipos(contrato):
     assert contrato["info"]["description"]
     assert contrato["info"]["contact"]["name"]
-    assert contrato["servers"]
+    assert [s["url"] for s in contrato["servers"]] == [
+        "http://localhost:8090",
+        "https://13-59-144-83.sslip.io",
+    ]
     assert {t["name"] for t in contrato["tags"]} >= {"notificaciones", "administración", "health"}
 
 

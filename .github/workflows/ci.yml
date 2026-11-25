@@ -35,6 +35,12 @@ jobs:
           uv run lint-imports
       - name: Build de la imagen Docker
         run: docker build -t notificaciones:ci .
+      - name: Validar los compose
+        # Un error de sintaxis o una variable obligatoria mal escrita se ve aquí, no en el servidor.
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml config -q
+          API_IMAGE=notificaciones:ci DOMINIO=localhost docker compose -f docker-compose.prod.yml config -q
       - name: SonarCloud
         # Se activa con la variable de repo SONAR_ENABLED=true (los secrets no se pueden usar en un if).
         # El token vive solo en este paso: las pruebas y el build no lo ven.

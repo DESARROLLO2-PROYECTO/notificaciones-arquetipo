@@ -37,17 +37,31 @@ jobs:
           printf '%s\n' "$EC2_SSH_KEY" | tr -d '\r' > ~/ec2.pem
           printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/ec2_known_hosts
           SSH_OPTS=(-i ~/ec2.pem -o UserKnownHostsFile=$HOME/ec2_known_hosts -o StrictHostKeyChecking=yes)
-          scp "${SSH_OPTS[@]}" docker-compose.prod.yml "$EC2_USER@$EC2_HOST:notificaciones/"
+          scp "${SSH_OPTS[@]}" docker-compose.prod.yml Caddyfile "$EC2_USER@$EC2_HOST:notificaciones/"
           ssh "${SSH_OPTS[@]}" "$EC2_USER@$EC2_HOST" bash -s <<REMOTO
           set -e
           cd ~/notificaciones
+          # Sin estas variables el despliegue funcionaría a medias: mejor detenerse con un aviso claro.
+          for v in AMQP_URL DOMINIO CICLO_INTERVALO_S; do
+            grep -q "^\$v=." .env || { echo "Falta \$v en ~/notificaciones/.env"; exit 1; }
+          done
           sed -i 's|^API_IMAGE=.*|API_IMAGE=$IMAGE|' .env
           docker compose -f docker-compose.prod.yml pull api
           docker compose -f docker-compose.prod.yml up -d
           PORT=\$(grep -oP '^API_PORT=\K.*' .env || echo 8090)
           for i in \$(seq 1 30); do
-            curl -fsS "http://localhost:\$PORT/health" && echo " API UP" && exit 0
+            curl -fsS "http://localhost:\$PORT/health" && echo " API UP" && break
             sleep 2
+            if [ \$i = 30 ]; then
+              echo "La API no respondió en /health"; docker compose -f docker-compose.prod.yml logs --tail 50 api; exit 1
+            fi
           done
-          echo "La API no respondió en /health"; docker compose -f docker-compose.prod.yml logs --tail 50 api; exit 1
+          # El HTTPS público depende de DNS, de los puertos 80 y 443 y del certificado: se avisa, no se falla.
+          DOMINIO=\$(grep -oP '^DOMINIO=\K.*' .env)
+          for i in \$(seq 1 20); do
+            curl -fsS "https://\$DOMINIO/health" && echo " HTTPS UP en \$DOMINIO" && exit 0
+            sleep 3
+          done
+          echo "AVISO: la API responde en el servidor, pero https://\$DOMINIO/health aún no (DNS, puertos 80 y 443 o certificado)"
+          docker compose -f docker-compose.prod.yml logs --tail 20 caddy
           REMOTO
