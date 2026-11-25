@@ -36,6 +36,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# El guion del demo es texto para leer en voz alta: se prefiere una frase por línea.
+"scripts/demo/principal.py" = ["E501"]
+
 [tool.mypy]
 files = ["app", "scripts"]
 python_version = "3.12"

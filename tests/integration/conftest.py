@@ -42,14 +42,14 @@ def rabbitmq():
     from testcontainers.core.container import DockerContainer
     from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
-    contenedor = (
-        DockerContainer("rabbitmq:3.13.7-alpine")
-        .with_env("RABBITMQ_DEFAULT_USER", "test")
-        .with_env("RABBITMQ_DEFAULT_PASS", "test")
-        .with_exposed_ports(5672)
-        .waiting_for(LogMessageWaitStrategy("Server startup complete").with_startup_timeout(90))
-    )
-    try:
+    try:  # sin Docker, hasta crear el contenedor falla: se omite en local y falla en CI
+        contenedor = (
+            DockerContainer("rabbitmq:3.13.7-alpine")
+            .with_env("RABBITMQ_DEFAULT_USER", "test")
+            .with_env("RABBITMQ_DEFAULT_PASS", "test")
+            .with_exposed_ports(5672)
+            .waiting_for(LogMessageWaitStrategy("Server startup complete").with_startup_timeout(90))
+        )
         contenedor.start()
     except Exception as exc:
         if os.environ.get("CI"):

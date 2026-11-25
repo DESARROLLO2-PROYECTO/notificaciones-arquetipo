@@ -22,6 +22,9 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      # Solo desde esta máquina: lo usa el demo (scripts/demo) para mirar las colas.
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
     volumes:
       - notif_rabbitmq:/var/lib/rabbitmq
     healthcheck:

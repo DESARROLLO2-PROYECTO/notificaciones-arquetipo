@@ -32,3 +32,11 @@ htmlcov/
 # Grafo local de graphify
 graphify-out/
 coverage.xml
+
+# Llaves del demo (scripts/demo)
+.demo.env
+
+# Copias de respaldo del .env (traen secretos); solo .env.example se versiona
+.env-*
+.env.*
+!.env.example
