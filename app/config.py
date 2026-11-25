@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # amqp://... en local o amqps://... (CloudAMQP). Sin valor, la cola queda deshabilitada.
     amqp_url: str | None = None
     amqp_timeout_s: float = 5.0  # conexión y confirmación de cada publicación
+    ciclo_intervalo_s: int = 300  # cada cuánto corre el planificador (scripts/planificador.py)
 
 
 @lru_cache
