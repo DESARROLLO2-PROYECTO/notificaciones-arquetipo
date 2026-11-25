@@ -5,7 +5,7 @@ from datetime import datetime
 from types import TracebackType
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -140,8 +140,9 @@ def _notificacion_a_dominio(r: m.Notificacion) -> puertos.Notificacion:
         intentos_publicacion=r.intentos_publicacion,
         intentos_entrega=r.intentos_entrega,
         publicada_at=r.publicada_at,
+        entregada_at=r.entregada_at,
         ultimo_error_publicacion=r.ultimo_error_publicacion,
-        proximo_intento_entrega=r.proximo_intento_entrega,
+        proximo_intento_entrega_at=r.proximo_intento_entrega_at,
         ultimo_error_entrega=r.ultimo_error_entrega,
         leida_at=r.leida_at,
         equipo_emisor_id=r.equipo_emisor_id,
@@ -161,8 +162,9 @@ class NotificacionRepo:
             intentos_publicacion=notificacion.intentos_publicacion,
             intentos_entrega=notificacion.intentos_entrega,
             publicada_at=notificacion.publicada_at,
+            entregada_at=notificacion.entregada_at,
             ultimo_error_publicacion=notificacion.ultimo_error_publicacion,
-            proximo_intento_entrega=notificacion.proximo_intento_entrega,
+            proximo_intento_entrega_at=notificacion.proximo_intento_entrega_at,
             ultimo_error_entrega=notificacion.ultimo_error_entrega,
             leida_at=notificacion.leida_at,
             equipo_emisor_id=notificacion.equipo_emisor_id,
@@ -186,7 +188,7 @@ class NotificacionRepo:
             .where(m.Notificacion.id == id)
             .values(
                 publicada_at=ahora,
-                proximo_intento_entrega=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
+                proximo_intento_entrega_at=ahora + puertos.ESPERA_PRIMERA_ENTREGA,
             )
         )
 
@@ -230,7 +232,7 @@ def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
         motivo_resolucion=(
             None if r.motivo_resolucion is None else puertos.ResolucionAlerta(r.motivo_resolucion)
         ),
-        resuelta_at=r.resuelta_at,
+        cerrada_at=r.cerrada_at,
     )
 
 
@@ -269,8 +271,8 @@ class AlertaRepo:
             .where(
                 m.Alerta.tipo == tipo,
                 m.Alerta.clave == clave,
-                m.Alerta.motivo_resolucion.is_(None),
-                or_(m.Alerta.expira_at.is_(None), m.Alerta.expira_at > ahora),
+                m.Alerta.cerrada_at.is_(None),
+                m.Alerta.expira_at > ahora,
             )
             .with_for_update()
         )
@@ -281,23 +283,21 @@ class AlertaRepo:
         self._s.execute(
             update(m.Alerta)
             .where(m.Alerta.id == id)
-            .values(motivo_resolucion=str(motivo), resuelta_at=ahora)
+            .values(motivo_resolucion=str(motivo), cerrada_at=ahora)
         )
 
     def expirar_vencidas(
         self, ahora: datetime, tipo: str | None = None, clave: str | None = None
     ) -> list[puertos.Alerta]:
         # Un solo UPDATE ... RETURNING: dos ciclos simultáneos nunca cierran la misma fila.
-        stmt = update(m.Alerta).where(
-            m.Alerta.motivo_resolucion.is_(None), m.Alerta.expira_at <= ahora
-        )
+        stmt = update(m.Alerta).where(m.Alerta.cerrada_at.is_(None), m.Alerta.expira_at <= ahora)
         if tipo is not None:
             stmt = stmt.where(m.Alerta.tipo == tipo)
         if clave is not None:
             stmt = stmt.where(m.Alerta.clave == clave)
         filas = self._s.scalars(
             stmt.values(
-                motivo_resolucion=str(puertos.ResolucionAlerta.EXPIRACION), resuelta_at=ahora
+                motivo_resolucion=str(puertos.ResolucionAlerta.EXPIRACION), cerrada_at=ahora
             ).returning(m.Alerta)
         ).all()
         return [_alerta_a_dominio(r) for r in filas]

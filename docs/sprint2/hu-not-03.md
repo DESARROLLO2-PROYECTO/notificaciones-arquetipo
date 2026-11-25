@@ -25,7 +25,7 @@ No hay migración: las columnas ya existían.
 | 1. Publicación en menos de 1 min | La solicitud que registra publica de inmediato; si falla, el ciclo (cada 5 min) la toma cuando tiene más de 1 min. El mensaje solo lleva `id` y `tipo`. |
 | 2. Una cola por destino | Clave de ruteo igual al destino; cola `notif.<destino>`. |
 | 3. Credenciales del broker | Solo la API y el worker tienen `AMQP_URL`; el emisor nunca la ve. |
-| 4. Tras publicar | `publicada_at` en UTC, `proximo_intento_entrega = publicada_at + 5 min` y el log `Notificación <id> publicada correctamente` (después del commit). |
+| 4. Tras publicar | `publicada_at` en UTC, `proximo_intento_entrega_at = publicada_at + 5 min` y el log `Notificación <id> publicada correctamente` (después del commit). |
 | 5. Una sola vez | Con `publicada_at` no se vuelve a publicar: ni duplicadas, ni resoluciones, ni el ciclo. |
 | 6. Cola no disponible | La notificación se conserva: `intentos_publicacion` +1, `ultimo_error_publicacion` con el tipo de error (nunca la URL) y el log `Cola no disponible, la notificación <id> queda pendiente de publicación`. La solicitud sigue respondiendo 201. Sin `AMQP_URL` ocurre lo mismo. |
 | 7. Reintento | El ciclo toma las pendientes con menos de 3 intentos y más de 1 min, en orden de creación (hasta 50 por ciclo; si el broker falla se detiene en la primera, el resto espera al siguiente ciclo), con `FOR UPDATE SKIP LOCKED`: dos ciclos simultáneos no toman la misma. |

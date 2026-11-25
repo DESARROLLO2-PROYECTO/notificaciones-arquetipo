@@ -46,7 +46,7 @@ class ApiKeyRepository(Protocol):
 class TipoNotificacion:
     """Define un tipo de notificación entre equipos."""
 
-    campo_clave: str
+    campo_clave: str | None  # sin clave, el tipo tiene una sola alerta
     ttl_alerta_min: int
     activo: bool
     codigo: str
@@ -68,8 +68,9 @@ class Notificacion:
     intentos_publicacion: int = 0
     intentos_entrega: int = 0
     publicada_at: datetime | None = None
+    entregada_at: datetime | None = None
     ultimo_error_publicacion: str | None = None
-    proximo_intento_entrega: datetime | None = None
+    proximo_intento_entrega_at: datetime | None = None
     ultimo_error_entrega: str | None = None
     leida_at: datetime | None = None
     equipo_emisor_id: int | None = None
@@ -108,8 +109,8 @@ Listado ENUM de motivos válidos para la resolución de la alerta
 
 
 class ResolucionAlerta(StrEnum):
-    EMISOR = "emisor"
-    EXPIRACION = "expiracion"
+    EMISOR = "EMISOR"
+    EXPIRACION = "EXPIRACION"
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,7 @@ class Alerta:
     creada_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expira_at: datetime | None = None
     motivo_resolucion: ResolucionAlerta | None = None
-    resuelta_at: datetime | None = None
+    cerrada_at: datetime | None = None
     id: int | None = None
 
 
