@@ -1,0 +1,12 @@
+# Proxy inverso con HTTPS automático (Let's Encrypt). Lo levanta docker-compose.prod.yml.
+# DOMINIO viene del .env: un nombre que apunte a la IP del servidor (p. ej. 13-59-144-83.sslip.io)
+# con los puertos 80 y 443 abiertos. Con DOMINIO=localhost usa un certificado local (pruebas).
+{$DOMINIO} {
+	encode zstd gzip
+	reverse_proxy api:8000
+	header {
+		Strict-Transport-Security "max-age=15552000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}

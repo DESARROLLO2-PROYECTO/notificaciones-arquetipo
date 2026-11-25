@@ -40,6 +40,8 @@ Swagger en http://localhost:8090/docs. Errores: 404 (no existe), 409 (nombre rep
 
 `docker compose` levanta también RabbitMQ para la cola de mensajes; ver [docs/sprint2/cola.md](docs/sprint2/cola.md).
 
+En producción (EC2) corren además un **planificador** (el ciclo cada 5 minutos) y **Caddy** (HTTPS): ver [docs/despliegue.md](docs/despliegue.md). En local, `docker compose --profile planificador up` agrega el planificador.
+
 Para mostrar el funcionamiento con equipos falsos: `uv run python -m scripts.demo --preparar` y luego `uv run python -m scripts.demo` (ver [docs/demo.md](docs/demo.md)).
 
 ## 4. Tests locales

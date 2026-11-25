@@ -10,7 +10,7 @@ from fastapi.routing import APIRoute
 
 from app.api.schemas import ErrorResponse, ErrorValidacionResponse
 
-API_VERSION = "0.3.0"  # versión del contrato (semver); ver docs/api/README.md
+API_VERSION = "0.3.1"  # versión del contrato (semver); ver docs/api/README.md
 
 DESCRIPCION = """
 Módulo de **Notificaciones** del software de fabricación de Cutit Saws. Inventario y Fabricación
