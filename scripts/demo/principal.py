@@ -16,6 +16,9 @@ from scripts.demo.configuracion import Configuracion, cargar, descubrir_amqp, pr
 from scripts.demo.equipos_falsos import Administracion, ClienteApi, Fabricacion, Inventario
 from scripts.demo.salida import Respuesta, Salida
 
+# Códigos de salida del demo
+CORRECTO, COMPROBACION_FALLIDA, SIN_EJECUTAR = 0, 1, 2
+
 
 def _id(r: Respuesta) -> str | None:
     return r.cuerpo.get("id") if isinstance(r.cuerpo, dict) else None
@@ -209,6 +212,54 @@ def _escena_broker_caido(
         salida.registrar("Escena 7", "el mensaje llegó a la cola", mensaje is not None)
 
 
+def _con_llaves(
+    config: Configuracion, preparar: bool, argumentos: Sequence[str], salida: Salida
+) -> Configuracion | None:
+    """Crea las llaves si se pidió (`--preparar`) y comprueba que estén todas; None si faltan."""
+    if preparar:
+        try:
+            llaves = preparar_llaves(Path.cwd())
+        except (RuntimeError, OSError) as error:
+            salida.linea(f"✗ {error}")
+            salida.linea("  Genere las llaves a mano y expórtelas: DEMO_LLAVE_INVENTARIO, "
+                         "DEMO_LLAVE_FABRICACION y DEMO_LLAVE_ADMIN.")  # fmt: skip
+            return None
+        salida.linea(f"✓ Llaves creadas y guardadas en .demo.env ({', '.join(llaves)})")
+        config, _ = cargar(argumentos)
+    faltan = [rol for rol, llave in config.llaves.items() if not llave]
+    if faltan:
+        salida.linea(f"✗ Faltan las llaves de: {', '.join(faltan)}.")
+        salida.linea("  Use --preparar (docker compose local) o defina DEMO_LLAVE_INVENTARIO, "
+                     "DEMO_LLAVE_FABRICACION y DEMO_LLAVE_ADMIN.")  # fmt: skip
+        return None
+    return config
+
+
+def _ejecutar(
+    config: Configuracion,
+    salida: Salida,
+    http: httpx.Client | None,
+    dormir: Callable[[float], None],
+) -> int:
+    if not config.amqp_url and urlsplit(config.url).hostname in ("localhost", "127.0.0.1"):
+        config = replace(config, amqp_url=descubrir_amqp(Path.cwd()))
+    cliente = http or httpx.Client(base_url=config.url, timeout=15)
+    escucha = Escucha(config.amqp_url)
+    codigo = CORRECTO
+    try:
+        if not correr(config, salida, cliente, escucha, dormir):
+            codigo = COMPROBACION_FALLIDA
+    except httpx.TransportError:
+        salida.linea(f"✗ No se pudo conectar a {config.url}. ¿Está levantada la API? "
+                     "(docker compose up --build)")  # fmt: skip
+        codigo = SIN_EJECUTAR
+    finally:
+        escucha.cerrar()
+        if http is None:
+            cliente.close()
+    return codigo
+
+
 def main(
     argv: Sequence[str] | None = None,
     http: httpx.Client | None = None,
@@ -224,33 +275,7 @@ def main(
         escribir=escribir,
         leer=leer,
     )
-    if preparar:
-        try:
-            llaves = preparar_llaves(Path.cwd())
-        except (RuntimeError, OSError) as error:
-            salida.linea(f"✗ {error}")
-            salida.linea("  Genere las llaves a mano y expórtelas: DEMO_LLAVE_INVENTARIO, "
-                         "DEMO_LLAVE_FABRICACION y DEMO_LLAVE_ADMIN.")  # fmt: skip
-            return 2
-        salida.linea(f"✓ Llaves creadas y guardadas en .demo.env ({', '.join(llaves)})")
-        config, _ = cargar(argumentos)
-    faltan = [rol for rol, llave in config.llaves.items() if not llave]
-    if faltan:
-        salida.linea(f"✗ Faltan las llaves de: {', '.join(faltan)}.")
-        salida.linea("  Use --preparar (docker compose local) o defina DEMO_LLAVE_INVENTARIO, "
-                     "DEMO_LLAVE_FABRICACION y DEMO_LLAVE_ADMIN.")  # fmt: skip
-        return 2
-    if not config.amqp_url and urlsplit(config.url).hostname in ("localhost", "127.0.0.1"):
-        config = replace(config, amqp_url=descubrir_amqp(Path.cwd()))
-    cliente = http or httpx.Client(base_url=config.url, timeout=15)
-    escucha = Escucha(config.amqp_url)
-    try:
-        return 0 if correr(config, salida, cliente, escucha, dormir) else 1
-    except httpx.TransportError:
-        salida.linea(f"✗ No se pudo conectar a {config.url}. ¿Está levantada la API? "
-                     "(docker compose up --build)")  # fmt: skip
-        return 2
-    finally:
-        escucha.cerrar()
-        if http is None:
-            cliente.close()
+    config_completa = _con_llaves(config, preparar, argumentos, salida)
+    if config_completa is None:
+        return SIN_EJECUTAR
+    return _ejecutar(config_completa, salida, http, dormir)

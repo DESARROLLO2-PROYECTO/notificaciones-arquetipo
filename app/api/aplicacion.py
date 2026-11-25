@@ -104,8 +104,10 @@ def construir_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         precalentar_publicador()
-        yield
-        cerrar_publicador()  # no hace nada si la cola nunca se usó
+        try:
+            yield
+        finally:
+            cerrar_publicador()  # no hace nada si la cola nunca se usó
 
     app = FastAPI(
         title="API de Notificaciones",
