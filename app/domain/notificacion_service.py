@@ -177,7 +177,9 @@ class ServicioNotificaciones:
             uow.alertas.resolver(alerta.id, ResolucionAlerta.EMISOR, ahora)
             uow.commit()
             self._log_resolucion(alerta, ResolucionAlerta.EMISOR)
-            res = ResultadoRegistro(alerta.notificacion_id, False, tipo, destino, clave, "RESUELTA")
+            res = ResultadoRegistro(
+                alerta.notificacion_id, False, tipo, destino, clave, "ALERTA_CERRADA"
+            )
         self._log_resultado(res)
         return res
 

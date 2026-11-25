@@ -536,7 +536,7 @@ def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplo
 
     res = _registrar(servicio, evento)
 
-    assert res.resultado_log == "RESUELTA"
+    assert res.resultado_log == "ALERTA_CERRADA"
     assert res.notificacion_id == original.notificacion_id
     alerta = uow.alertas_guardadas[0]
     assert alerta.motivo_resolucion == puertos.ResolucionAlerta.EMISOR
@@ -546,6 +546,7 @@ def test_evento_de_resolucion_cierra_la_alerta_activa(uow: FakeUnitOfWork, caplo
         f"Alerta STOCK_BAJO_INSUMO/INS-001 resuelta por EMISOR "
         f"notificacion_id={original.notificacion_id}" in caplog.text
     )
+    assert "resultado=ALERTA_CERRADA tipo=STOCK_BAJO_INSUMO" in caplog.text
 
 
 def test_evento_de_resolucion_sin_alerta_activa_no_escribe(uow: FakeUnitOfWork):
