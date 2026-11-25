@@ -9,15 +9,17 @@ from uuid import UUID
 
 from app.domain import puertos
 from app.domain.errores import (
+    ColaNoDisponible,
     ErrorConcurrenciaAlerta,
     NoAutorizado,
     TipoNotificacionInvalido,
 )
-from app.domain.puertos import ResolucionAlerta
+from app.domain.puertos import MAX_INTENTOS_PUBLICACION, MensajeNotificacion, ResolucionAlerta
 
 logger = logging.getLogger("notificaciones")
 
 _EVENTOS_RESOLUCION = ("REPUESTO", "RESUELTA")
+_LOTE_PUBLICACION = 50  # por ciclo; el resto espera al siguiente
 
 
 @dataclass(frozen=True)
@@ -31,8 +33,11 @@ class ResultadoRegistro:
 
 
 class ServicioNotificaciones:
-    def __init__(self, uow_factory: Callable[[], puertos.UnitOfWork]) -> None:
+    def __init__(
+        self, uow_factory: Callable[[], puertos.UnitOfWork], publicador: puertos.Publicador
+    ) -> None:
         self._uow_factory = uow_factory
+        self._publicador = publicador
 
     def registrar_notificacion(
         self,
@@ -165,7 +170,67 @@ class ServicioNotificaciones:
             resultado_log="REGISTRADA",
         )
         self._log_resultado(res)
+        self._publicar_nueva(notificacion.id, tipo_notif.codigo, destino)
         return res
+
+    def _publicar_nueva(self, id: UUID, tipo: str, destino: str) -> None:
+        """Publica la recién registrada; si falla, nunca cambia el resultado de la solicitud."""
+        try:
+            with self._uow_factory() as uow:
+                logs: list[str] = []
+                self._publicar(uow, id, tipo, destino, logs)
+                uow.commit()
+            for linea in logs:
+                logger.info(linea)
+        except Exception:
+            logger.exception("No se pudo registrar la publicación de la notificación %s", id)
+
+    def _publicar(
+        self, uow: puertos.UnitOfWork, id: UUID, tipo: str, destino: str, logs: list[str]
+    ) -> bool:
+        """Publica y deja marcado el resultado; los logs se emiten tras el commit."""
+        try:
+            self._publicador.publicar(MensajeNotificacion(id, tipo, destino))
+        except ColaNoDisponible as error:
+            detalle = str(error) + (
+                f" ({type(error.__cause__).__name__})" if error.__cause__ else ""
+            )
+            self._registrar_fallo(uow, id, detalle, logs)
+            return False
+        uow.notificaciones.marcar_publicada(id, datetime.now(UTC))
+        logs.append(f"Notificación {id} publicada correctamente")
+        return True
+
+    def _registrar_fallo(
+        self, uow: puertos.UnitOfWork, id: UUID, detalle: str, logs: list[str]
+    ) -> None:
+        intentos = uow.notificaciones.registrar_fallo_publicacion(id, detalle)
+        logs.append(f"Cola no disponible, la notificación {id} queda pendiente de publicación")
+        if intentos >= MAX_INTENTOS_PUBLICACION:
+            logs.append(
+                f"La notificación {id} no pudo publicarse tras {MAX_INTENTOS_PUBLICACION} intentos"
+            )
+
+    def _reintentar_publicaciones(self) -> int:
+        logs: list[str] = []
+        publicadas = 0
+        with self._uow_factory() as uow:
+            for n in uow.notificaciones.tomar_pendientes_publicacion(
+                datetime.now(UTC), _LOTE_PUBLICACION
+            ):
+                try:
+                    destino = self._nombre_destino(uow, n.equipo_destino_id)
+                    if not self._publicar(uow, n.id, n.tipo, destino, logs):
+                        break  # broker caído: el resto espera al siguiente ciclo
+                    publicadas += 1
+                except Exception as error:
+                    # Solo esa fila falla: un rollback repetiría las ya publicadas.
+                    logger.exception("Error inesperado al publicar la notificación %s", n.id)
+                    self._registrar_fallo(uow, n.id, type(error).__name__, logs)
+            uow.commit()
+        for linea in logs:
+            logger.info(linea)
+        return publicadas
 
     def _resolver_alerta(
         self, uow: puertos.UnitOfWork, ahora: datetime, tipo: str, destino: str, clave: str
@@ -199,7 +264,10 @@ class ServicioNotificaciones:
         return resumen, errores
 
     def _tareas_ciclo(self) -> tuple[tuple[str, Callable[[], int]], ...]:
-        return (("alertas", self._limpiar_alertas),)
+        return (
+            ("alertas", self._limpiar_alertas),
+            ("publicaciones", self._reintentar_publicaciones),
+        )
 
     def _limpiar_alertas(self) -> int:
         with self._uow_factory() as uow:
@@ -253,7 +321,10 @@ class ServicioNotificaciones:
     def _resolver_destino_desde_tipo(
         self, uow: puertos.UnitOfWork, tipo_notif: puertos.TipoNotificacion
     ) -> str:
-        if tipo_notif.equipo_destino_id is None:
+        return self._nombre_destino(uow, tipo_notif.equipo_destino_id)
+
+    def _nombre_destino(self, uow: puertos.UnitOfWork, equipo_destino_id: int | None) -> str:
+        if equipo_destino_id is None:
             return "desconocido"
-        equipo = uow.equipos.obtener(tipo_notif.equipo_destino_id)
+        equipo = uow.equipos.obtener(equipo_destino_id)
         return equipo.nombre if equipo is not None else "desconocido"
