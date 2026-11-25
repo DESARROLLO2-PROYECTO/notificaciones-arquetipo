@@ -1,7 +1,7 @@
 """Repository/DAO: implementa los puertos de app/domain/puertos.py con SQLAlchemy."""
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from types import TracebackType
 from uuid import UUID
 
@@ -192,6 +192,7 @@ def _alerta_a_dominio(r: m.Alerta) -> puertos.Alerta:
         motivo_resolucion=(
             None if r.motivo_resolucion is None else puertos.ResolucionAlerta(r.motivo_resolucion)
         ),
+        resuelta_at=r.resuelta_at,
     )
 
 
@@ -224,8 +225,7 @@ class AlertaRepo:
         r = self._s.get(m.Alerta, id)
         return None if r is None else _alerta_a_dominio(r)
 
-    def obtener_activa(self, tipo: str, clave: str) -> puertos.Alerta | None:
-        ahora = datetime.now(UTC)
+    def obtener_activa(self, tipo: str, clave: str, ahora: datetime) -> puertos.Alerta | None:
         stmt = (
             select(m.Alerta)
             .where(
@@ -238,6 +238,31 @@ class AlertaRepo:
         )
         r = self._s.execute(stmt).scalar_one_or_none()
         return None if r is None else _alerta_a_dominio(r)
+
+    def resolver(self, id: int, motivo: puertos.ResolucionAlerta, ahora: datetime) -> None:
+        self._s.execute(
+            update(m.Alerta)
+            .where(m.Alerta.id == id)
+            .values(motivo_resolucion=str(motivo), resuelta_at=ahora)
+        )
+
+    def expirar_vencidas(
+        self, ahora: datetime, tipo: str | None = None, clave: str | None = None
+    ) -> list[puertos.Alerta]:
+        # Un solo UPDATE ... RETURNING: dos ciclos simultáneos nunca cierran la misma fila.
+        stmt = update(m.Alerta).where(
+            m.Alerta.motivo_resolucion.is_(None), m.Alerta.expira_at <= ahora
+        )
+        if tipo is not None:
+            stmt = stmt.where(m.Alerta.tipo == tipo)
+        if clave is not None:
+            stmt = stmt.where(m.Alerta.clave == clave)
+        filas = self._s.scalars(
+            stmt.values(
+                motivo_resolucion=str(puertos.ResolucionAlerta.EXPIRACION), resuelta_at=ahora
+            ).returning(m.Alerta)
+        ).all()
+        return [_alerta_a_dominio(r) for r in filas]
 
 
 class SqlAlchemyUnitOfWork:

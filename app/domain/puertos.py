@@ -100,12 +100,21 @@ class Alerta:
     creada_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expira_at: datetime | None = None
     motivo_resolucion: ResolucionAlerta | None = None
+    resuelta_at: datetime | None = None
     id: int | None = None
 
 
 class AlertaRepository(Protocol):
     def crear(self, alerta: Alerta) -> Alerta: ...
-    def obtener_activa(self, tipo: str, clave: str) -> Alerta | None: ...
+    def obtener_activa(self, tipo: str, clave: str, ahora: datetime) -> Alerta | None: ...
+
+    def resolver(self, id: int, motivo: ResolucionAlerta, ahora: datetime) -> None: ...
+
+    def expirar_vencidas(
+        self, ahora: datetime, tipo: str | None = None, clave: str | None = None
+    ) -> list[Alerta]:
+        """Cierra con motivo EXPIRACION las vencidas en una sola sentencia atómica."""
+        ...
 
 
 """

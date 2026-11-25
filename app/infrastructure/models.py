@@ -78,6 +78,7 @@ class Alerta(Base):
     )
     expira_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     motivo_resolucion: Mapped[str | None] = mapped_column(String(30))
+    resuelta_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         Index(
             "uq_alerta_activa_tipo_clave",
