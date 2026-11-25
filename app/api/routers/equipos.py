@@ -28,7 +28,7 @@ router = APIRouter(
         **respuestas(401, 422, 500),
     },
 )
-def crear(datos: EquipoIn, servicio: ServicioDep) -> EquipoOut:
+def crear_equipo(datos: EquipoIn, servicio: ServicioDep) -> EquipoOut:
     e = servicio.crear(datos.nombre, datos.es_admin)
     return EquipoOut.model_validate(e, from_attributes=True)
 
@@ -41,5 +41,7 @@ def crear(datos: EquipoIn, servicio: ServicioDep) -> EquipoOut:
     description="Devuelve el equipo por su identificador (404 si no existe).",
     responses={404: {"description": "Equipo no encontrado"}, **respuestas(401, 422, 500)},
 )
-def obtener(id: Annotated[int, Path(ge=1, le=2**31 - 1)], servicio: ServicioDep) -> EquipoOut:
+def obtener_equipo(
+    id: Annotated[int, Path(ge=1, le=2**31 - 1)], servicio: ServicioDep
+) -> EquipoOut:
     return EquipoOut.model_validate(servicio.obtener(id), from_attributes=True)

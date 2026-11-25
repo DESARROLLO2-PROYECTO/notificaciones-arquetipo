@@ -57,6 +57,8 @@ def test_los_ids_de_operacion_son_unicos_y_legibles(contrato):
 
     assert len(ids) == len(set(ids))
     assert all("_" not in id and id[0].islower() for id in ids), ids
+    # Un verbo suelto ("crear") no dice sobre qué recurso actúa: debe ser verbo + recurso
+    assert all(any(c.isupper() for c in id) or id == "health" for id in ids), ids
 
 
 def test_toda_ruta_privada_declara_la_llave_y_sus_errores(contrato):
