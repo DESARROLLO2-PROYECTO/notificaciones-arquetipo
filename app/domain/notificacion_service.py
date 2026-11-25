@@ -10,6 +10,7 @@ from uuid import UUID
 from app.domain import puertos
 from app.domain.errores import (
     ErrorConcurrenciaAlerta,
+    NoAutorizado,
     TipoNotificacionInvalido,
 )
 
@@ -85,6 +86,12 @@ class ServicioNotificaciones:
                 )
 
             destino = self._resolver_destino_desde_tipo(uow, tipo_notif)
+            if tipo_notif.equipo_emisor_id is not None and (
+                tipo_notif.equipo_emisor_id != equipo_emisor_id
+            ):
+                self._log_rechazo(tipo_notif.codigo, destino, clave)
+                raise NoAutorizado("emisor no permitido")
+
             # 1. Buscar alerta activa bloqueando fila si ya existe (FOR UPDATE)
             alerta = uow.alertas.obtener_activa(tipo=tipo_notif.codigo, clave=clave)
 

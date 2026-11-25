@@ -80,18 +80,18 @@ class ApiKeyRepo:
         )
         return actualizado is not None
 
-    def obtener_rol_y_estado_por_hash(self, hash_llave: str) -> tuple[str, bool] | None:
-        """Devuelve el rol y el estado de la llave identificada por el hash."""
+    def obtener_por_hash(self, hash_llave: str) -> tuple[int, str, bool] | None:
+        """Devuelve el equipo, el rol y el estado de la llave identificada por el hash."""
         registro = self._s.execute(
-            select(m.Equipo.nombre, m.ApiKey.activa)
+            select(m.Equipo.id, m.Equipo.nombre, m.ApiKey.activa)
             .select_from(m.ApiKey)
             .join(m.Equipo, m.ApiKey.equipo_id == m.Equipo.id)
             .where(m.ApiKey.hash == hash_llave)
         ).one_or_none()
         if registro is None:
             return None
-        rol, activa = registro
-        return rol, activa
+        equipo_id, rol, activa = registro
+        return equipo_id, rol, activa
 
 
 def _tipo_notificacion_a_dominio(r: m.TipoNotificacion) -> puertos.TipoNotificacion:
@@ -210,8 +210,14 @@ class AlertaRepo:
                 None if alerta.motivo_resolucion is None else str(alerta.motivo_resolucion)
             ),
         )
-        self._s.add(registro)
-        self._s.flush()
+        try:
+            self._s.add(registro)
+            self._s.flush()
+        except IntegrityError as exc:
+            # Otra solicitud activó la misma alerta justo antes (índice único parcial).
+            if "unique" not in str(exc.orig).lower():
+                raise
+            raise ErrorConcurrenciaAlerta("Ya existe una alerta activa concurrente") from exc
         return _alerta_a_dominio(registro)
 
     def obtener(self, id: int) -> puertos.Alerta | None:

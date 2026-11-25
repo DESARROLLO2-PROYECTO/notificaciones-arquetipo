@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.domain.errores import (
     ErrorDominio,
     NoAutenticado,
+    NoAutorizado,
     NoEncontrado,
     NombreDuplicado,
     TipoNotificacionInvalido,
@@ -20,6 +21,7 @@ log = logging.getLogger(__name__)
 
 _ESTADOS: dict[type[ErrorDominio], int] = {
     NoAutenticado: 401,
+    NoAutorizado: 403,
     NoEncontrado: 404,
     NombreDuplicado: 409,
     TipoNotificacionInvalido: 422,

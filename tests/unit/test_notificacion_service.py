@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.domain import puertos
-from app.domain.errores import TipoNotificacionInvalido
+from app.domain.errores import NoAutorizado, TipoNotificacionInvalido
 from app.domain.notificacion_service import ErrorConcurrenciaAlerta, ServicioNotificaciones
 
 # --- Fakes en memoria (Ports & UnitOfWork) ---
@@ -276,12 +276,13 @@ def test_registrar_mismo_producto_distinto_tipo_crea_segunda_alerta(uow: FakeUni
 
     # Act
     r1 = servicio.registrar_notificacion(
-        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(productoId="X-1")
+        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(productoId="X-1"), equipo_emisor_id=1
     )
     r2 = servicio.registrar_notificacion(
         "STOCK_BAJO_PRODUCTO",
         "DETECTADA",
         _datos_stock(tipo="STOCK_BAJO_PRODUCTO", productoId="X-1"),
+        equipo_emisor_id=1,
     )
 
     # Assert
@@ -305,7 +306,9 @@ def test_registrar_cuando_alerta_anterior_expiro_crea_nueva(uow: FakeUnitOfWork)
     uow.alertas_guardadas.append(alerta_expirada)
 
     # Act
-    res = servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+    res = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(), equipo_emisor_id=1
+    )
 
     # Assert
     assert res.duplicada is False
@@ -335,6 +338,30 @@ def test_registrar_tipo_invalido_o_inactivo_lanza_error_y_loggea_rechazo(
     )
 
 
+@pytest.mark.parametrize("emisor", [2, None])
+def test_registrar_con_emisor_distinto_al_del_tipo_lanza_403_y_no_guarda(
+    uow: FakeUnitOfWork, caplog, emisor: int | None
+):
+    # Arrange: STOCK_BAJO_INSUMO lo emite el equipo 1 (inventario)
+    caplog.set_level(logging.INFO)
+    servicio = ServicioNotificaciones(lambda: uow)
+
+    # Act / Assert
+    with pytest.raises(NoAutorizado, match="^Acceso denegado$") as error:
+        servicio.registrar_notificacion(
+            "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(), equipo_emisor_id=emisor
+        )
+
+    assert error.value.motivo == "emisor no permitido"
+    assert len(uow.notificaciones_guardadas) == 0
+    assert len(uow.alertas_guardadas) == 0
+    assert uow.commits == 0
+    assert (
+        "resultado=RECHAZADA tipo=STOCK_BAJO_INSUMO destino=inventario "
+        "clave=INS-001 notificacion_id=None" in caplog.text
+    )
+
+
 def test_concurrencia_simultanea_captura_colision_y_devuelve_alerta_ganadora(
     uow: FakeUnitOfWork, caplog
 ):
@@ -351,7 +378,9 @@ def test_concurrencia_simultanea_captura_colision_y_devuelve_alerta_ganadora(
     )
 
     # Act
-    res = servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+    res = servicio.registrar_notificacion(
+        "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(), equipo_emisor_id=1
+    )
 
     # Assert
     assert res.duplicada is True
@@ -369,7 +398,9 @@ def test_falla_interna_en_commit_hace_rollback_y_no_deja_datos_parciales(uow: Fa
 
     # Act / Assert
     with pytest.raises(RuntimeError, match="Conexión perdida"):
-        servicio.registrar_notificacion("STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock())
+        servicio.registrar_notificacion(
+            "STOCK_BAJO_INSUMO", "DETECTADA", _datos_stock(), equipo_emisor_id=1
+        )
 
     assert uow.rollbacks == 1
     assert len(uow.notificaciones_guardadas) == 0

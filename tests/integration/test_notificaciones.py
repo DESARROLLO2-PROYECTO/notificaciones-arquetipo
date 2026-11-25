@@ -23,15 +23,15 @@ def _postgres():
     contenedor.stop()
 
 
-EMISOR_ID: int = 1
+LLAVES: dict[str, str] = {}
 
 
 @pytest.fixture(scope="module")
 def _setup_db(_postgres):
-    global EMISOR_ID
     from alembic import command
     from alembic.config import Config
     from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session
 
     from app.config import get_settings
     from app.infrastructure.db import get_engine
@@ -55,12 +55,6 @@ def _setup_db(_postgres):
         inv_id = conn.execute(
             text("SELECT id FROM equipos WHERE nombre = 'inventario'")
         ).scalar_one()
-        fab_id = conn.execute(
-            text("SELECT id FROM equipos WHERE nombre = 'fabricacion'")
-        ).scalar_one()
-
-        EMISOR_ID = inv_id
-
         conn.execute(
             text(
                 """
@@ -68,8 +62,6 @@ def _setup_db(_postgres):
                     (codigo, campo_clave, ttl_alerta_min, activo, 
                     equipo_emisor_id, equipo_destino_id)
                 VALUES
-                    ('STOCK_BAJO_INSUMO', 'productoId', 60, true, :inv, :inv),
-                    ('STOCK_BAJO_PRODUCTO', 'productoId', 60, true, :inv, :fab),
                     ('TIPO_INACTIVO_TEST', 'productoId', 60, false, :inv, :inv)
                 ON CONFLICT (codigo) DO UPDATE SET
                     equipo_emisor_id = EXCLUDED.equipo_emisor_id,
@@ -77,9 +69,17 @@ def _setup_db(_postgres):
                     activo = EXCLUDED.activo
                 """
             ),
-            {"inv": inv_id, "fab": fab_id},
+            {"inv": inv_id},
         )
     engine.dispose()
+
+    from app.domain.api_key_service import ApiKeyService
+    from app.infrastructure.repositories import ApiKeyRepo
+
+    with Session(get_engine()) as session, session.begin():
+        servicio = ApiKeyService(ApiKeyRepo(session))
+        for rol in ("inventario", "fabricacion"):
+            LLAVES[rol] = servicio.generar(rol).llave
 
 
 @pytest.fixture(scope="module")
@@ -110,9 +110,8 @@ def _cuerpo(**cambios) -> dict:
     return base
 
 
-def _post(client, cuerpo: dict, emisor_id: int | None = None):
-    eid = EMISOR_ID if emisor_id is None else emisor_id
-    return client.post("/notificaciones", params={"equipo_emisor_id": eid}, json=cuerpo)
+def _post(client, cuerpo: dict, rol: str = "inventario"):
+    return client.post("/notificaciones", headers={"X-API-Key": LLAVES[rol]}, json=cuerpo)
 
 
 # --- Criterio 2: Registro exitoso (HTTP 201) ---
@@ -287,3 +286,99 @@ def test_falla_interna_500(app):
 
     assert r.status_code == 500
     assert r.json() == {"mensaje": "No fue posible registrar la notificación, intente de nuevo"}
+
+
+# --- HU-NOT-12 sobre POST /notificaciones: la llave identifica al emisor ---
+
+
+def test_sin_llave_401(client):
+    r = client.post("/notificaciones", json=_cuerpo())
+
+    assert r.status_code == 401
+    assert r.json() == {"mensaje": "Acceso denegado"}
+
+
+def test_llave_invalida_401(client):
+    r = client.post("/notificaciones", headers={"X-API-Key": "no-existe"}, json=_cuerpo())
+
+    assert r.status_code == 401
+
+
+def test_llave_en_la_url_se_ignora_401(client):
+    r = client.post(f"/notificaciones?api_key={LLAVES['inventario']}", json=_cuerpo())
+
+    assert r.status_code == 401
+
+
+def test_emisor_distinto_al_del_tipo_403_y_no_registra(client):
+    # Arrange: STOCK_BAJO_INSUMO lo emite inventario, no fabricacion
+    cuerpo = _cuerpo()
+
+    # Act
+    r = _post(client, cuerpo=cuerpo, rol="fabricacion")
+    reintento = _post(client, cuerpo=cuerpo)  # con la llave correcta sí se registra
+
+    # Assert
+    assert r.status_code == 403
+    assert r.json() == {"mensaje": "Acceso denegado"}
+    assert reintento.status_code == 201
+
+
+def test_403_deja_el_motivo_y_el_rol_en_el_log_sin_la_llave(client, caplog):
+    caplog.set_level("WARNING")
+
+    _post(client, cuerpo=_cuerpo(), rol="fabricacion")
+
+    assert "RECHAZADA 403 endpoint=POST /notificaciones motivo=emisor no permitido" in caplog.text
+    assert "rol=fabricacion" in caplog.text
+    assert LLAVES["fabricacion"] not in caplog.text
+
+
+def test_catalogo_de_stock_bajo_lo_siembra_la_migracion(_setup_db):
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(os.environ["DATABASE_URL"])
+    with engine.connect() as conn:
+        filas = conn.execute(
+            text(
+                """
+                SELECT t.codigo, e.nombre, d.nombre, t.campo_clave, t.ttl_alerta_min, t.activo
+                FROM tipos_notificacion t
+                JOIN equipos e ON e.id = t.equipo_emisor_id
+                JOIN equipos d ON d.id = t.equipo_destino_id
+                WHERE t.codigo LIKE 'STOCK_BAJO_%'
+                ORDER BY t.codigo
+                """
+            )
+        ).all()
+    engine.dispose()
+
+    assert [tuple(f) for f in filas] == [
+        ("STOCK_BAJO_INSUMO", "inventario", "inventario", "productoId", 1440, True),
+        ("STOCK_BAJO_PRODUCTO", "inventario", "fabricacion", "productoId", 1440, True),
+    ]
+
+
+def test_colision_de_alerta_activa_en_flush_se_traduce_a_error_de_concurrencia(_setup_db):
+    from sqlalchemy.orm import Session
+
+    from app.domain import puertos
+    from app.domain.errores import ErrorConcurrenciaAlerta
+    from app.infrastructure.db import get_engine
+    from app.infrastructure.repositories import AlertaRepo, NotificacionRepo
+
+    clave = f"COL-{uuid4().hex[:10]}"
+    with Session(get_engine()) as session:
+        notificaciones = NotificacionRepo(session)
+        alertas = AlertaRepo(session)
+        primera = notificaciones.crear(puertos.Notificacion(tipo="STOCK_BAJO_INSUMO"))
+        segunda = notificaciones.crear(puertos.Notificacion(tipo="STOCK_BAJO_INSUMO"))
+        alertas.crear(
+            puertos.Alerta(tipo="STOCK_BAJO_INSUMO", clave=clave, notificacion_id=primera.id)
+        )
+
+        with pytest.raises(ErrorConcurrenciaAlerta):
+            alertas.crear(
+                puertos.Alerta(tipo="STOCK_BAJO_INSUMO", clave=clave, notificacion_id=segunda.id)
+            )
+        session.rollback()
