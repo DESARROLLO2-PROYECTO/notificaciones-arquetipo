@@ -17,6 +17,9 @@ def entorno(postgres, rabbitmq, monkeypatch):
     from app.infrastructure.repositories import ApiKeyRepo
     from app.main import create_app
 
+    # Cada rol admite dos llaves activas: se retiran las que dejaron otras pruebas de la sesión.
+    with postgres.begin() as c:
+        c.execute(text("UPDATE api_keys SET activa = false"))
     with Session(postgres) as session, session.begin():
         servicio = ApiKeyService(ApiKeyRepo(session))
         for variable, rol in (
@@ -52,6 +55,8 @@ def entorno(postgres, rabbitmq, monkeypatch):
         yield cliente, leer, dormir
     sano.cerrar()
     caido.cerrar()
+    with postgres.begin() as c:  # que el demo no deje llaves activas para las demás pruebas
+        c.execute(text("UPDATE api_keys SET activa = false"))
 
 
 def test_el_demo_completo_cumple_todas_sus_comprobaciones(entorno, monkeypatch, tmp_path):
