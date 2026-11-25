@@ -6,9 +6,10 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.domain.autenticacion_service import AutenticacionService
 from app.domain.equipo_service import EquipoService
 from app.infrastructure.db import transaccion
-from app.infrastructure.repositories import EquipoRepo
+from app.infrastructure.repositories import ApiKeyRepo, EquipoRepo
 
 
 def get_session() -> Iterator[Session]:
@@ -25,3 +26,10 @@ def get_equipos(session: SessionDep) -> EquipoService:
 
 
 ServicioDep = Annotated[EquipoService, Depends(get_equipos)]
+
+
+def get_autenticacion(session: SessionDep) -> AutenticacionService:
+    return AutenticacionService(ApiKeyRepo(session))
+
+
+AutenticacionDep = Annotated[AutenticacionService, Depends(get_autenticacion)]

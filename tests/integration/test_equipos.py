@@ -8,10 +8,16 @@ import pytest
 @pytest.fixture(scope="module")
 def client(postgres):
     from fastapi.testclient import TestClient
+    from sqlalchemy.orm import Session
 
+    from app.domain.api_key_service import ApiKeyService
+    from app.infrastructure.repositories import ApiKeyRepo
     from app.main import create_app
 
-    with TestClient(create_app()) as c:
+    with Session(postgres) as session, session.begin():
+        llave = ApiKeyService(ApiKeyRepo(session)).generar("notificaciones").llave
+
+    with TestClient(create_app(), headers={"X-API-Key": llave}) as c:
         yield c
 
 

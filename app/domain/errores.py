@@ -1,4 +1,4 @@
-"""Excepciones de dominio; la capa API las traduce a HTTP (404/409)."""
+"""Excepciones de dominio que la capa API traduce a respuestas HTTP."""
 
 
 class ErrorDominio(Exception):
@@ -13,3 +13,12 @@ class NoEncontrado(ErrorDominio):
 
 class NombreDuplicado(ErrorDominio):
     """409"""
+
+
+class NoAutenticado(ErrorDominio):
+    """401"""
+
+    def __init__(self, motivo: str, rol: str | None = None) -> None:
+        super().__init__("Acceso denegado")
+        self.motivo = motivo
+        self.rol = rol

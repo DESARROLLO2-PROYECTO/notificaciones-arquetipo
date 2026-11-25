@@ -54,8 +54,10 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
     hash_llave = hashlib.sha256(llave.encode()).hexdigest()
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
-        registro = repo.obtener_activa_por_hash(hash_llave)
-        assert registro.id == id
+        assert repo.obtener_rol_y_estado_por_hash(hash_llave) == ("notificaciones", True)
+        registro = session.get(ApiKey, id)
+        assert registro is not None
+        assert registro.hash == hash_llave
         assert registro.prefijo == hash_llave[:8]
         assert registro.activa is True
         assert registro.creada_at.utcoffset().total_seconds() == 0
@@ -72,9 +74,10 @@ def test_cli_generar_rotar_y_desactivar_con_persistencia_real(postgres):
     assert cli("desactivar_api_key", "--id", "999999").returncode == 1
     with Session(postgres) as session:
         repo = ApiKeyRepo(session)
-        assert repo.obtener_activa_por_hash(hash_llave) is None
-        assert repo.obtener_activa_por_hash("0" * 64) is None
-        assert repo.obtener_activa_por_hash(hashlib.sha256(segunda.encode()).hexdigest())
+        assert repo.obtener_rol_y_estado_por_hash(hash_llave) == ("notificaciones", False)
+        assert repo.obtener_rol_y_estado_por_hash("0" * 64) is None
+        hash_segunda = hashlib.sha256(segunda.encode()).hexdigest()
+        assert repo.obtener_rol_y_estado_por_hash(hash_segunda) == ("notificaciones", True)
         assert session.get(ApiKey, id).activa is False
     generar()
 
@@ -152,7 +155,8 @@ def test_migracion_reemplaza_prefijos_antiguos_sin_invalidar_llaves(postgres):
         command.upgrade(config, "head")
 
     with Session(postgres) as session:
-        registro = ApiKeyRepo(session).obtener_activa_por_hash(hash_llave)
+        registro = session.get(ApiKey, id)
         assert registro is not None
-        assert registro.id == id
+        assert registro.hash == hash_llave
+        assert registro.activa is True
         assert registro.prefijo == hash_llave[:8]
