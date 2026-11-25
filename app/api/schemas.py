@@ -2,10 +2,19 @@
 
 import re
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    StrictBool,
+    StrictInt,
+    Tag,
+    field_validator,
+)
 from pydantic.alias_generators import to_camel
 
 
@@ -69,6 +78,37 @@ class CrearNotificacionRequest(BaseModel):
         if not v.strip():
             raise ValueError("El nombre no puede estar vacío o contener solo espacios")
         return v
+
+
+_TIPO_CU = "CONDICION_URGENTE"
+
+
+class CondicionUrgenteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["CONDICION_URGENTE"]
+    evento: EventoNotificacion = EventoNotificacion.DETECTADA
+    codigoCondicion: Annotated[str, Field(pattern=r"^[A-Za-z0-9-]{1,30}$")]
+    descripcion: str = Field(min_length=1, max_length=100)
+
+    @field_validator("descripcion")
+    @classmethod
+    def validar_descripcion_no_vacia(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("La descripción no puede estar vacía o contener solo espacios")
+        return v
+
+
+def _tipo_cuerpo(v: Any) -> str:
+    # Todo lo que no es CONDICION_URGENTE cae en stock: conserva sus errores de siempre
+    es_cu = (v.get("tipo") if isinstance(v, dict) else getattr(v, "tipo", None)) == _TIPO_CU
+    return "condicion" if es_cu else "stock"
+
+
+CrearNotificacionBody = Annotated[
+    Annotated[CrearNotificacionRequest, Tag("stock")]
+    | Annotated[CondicionUrgenteRequest, Tag("condicion")],
+    Discriminator(_tipo_cuerpo),
+]
 
 
 class NotificacionCreadaResponse(BaseModel):
